@@ -1,0 +1,63 @@
+// Copyright 2024 The ChromiumOS Authors
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+package server
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"net"
+
+	"go.chromium.org/chromiumos/config/go/test/lab/api/passport"
+	"google.golang.org/grpc"
+)
+
+// InitializeGRPCServer sets up the passport service and registers services with it.
+func InitializeGRPCServer(ctx context.Context) (*grpc.Server, error) {
+	// Configure server.
+	var serverOpts []grpc.ServerOption
+	server := grpc.NewServer(serverOpts...)
+
+	switchServcice, err := newSwitchServiceServer(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to start switch server: %w", err)
+	}
+
+	cameraService, err := newCameraServiceServer(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to start camera server: %w", err)
+	}
+
+	passport.RegisterSwitchServiceServer(server, switchServcice)
+	passport.RegisterCameraServiceServer(server, cameraService)
+	return server, nil
+}
+
+// Serve starts the gRPC server on the specified port and waits for completion.
+// The server is stopped if the context expires. Will only return if the server
+// has stopped. Returns a non-nil error if the server stopped on its own.
+func Serve(ctx context.Context, server *grpc.Server, port int) error {
+	// Start server, stopping it if ctx expires.
+	addr := fmt.Sprintf("0.0.0.0:%d", port)
+	slog.Info("Starting gRPC server", "addr", addr)
+	lis, err := net.Listen("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("failed to listen on tcp port %d: %w", port, err)
+	}
+
+	slog.Debug("gRPC service info", "serviceInfo", server.GetServiceInfo())
+	serverChannel := make(chan error, 1)
+	go func() {
+		serverChannel <- server.Serve(lis)
+	}()
+	select {
+	case err := <-serverChannel:
+		return fmt.Errorf("grpc server error: %w", err)
+	case <-ctx.Done():
+		slog.Info("Stopping gRPC server gracefully")
+		server.GracefulStop()
+		return nil
+	}
+}
