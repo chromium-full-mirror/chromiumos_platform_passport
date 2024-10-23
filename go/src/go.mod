@@ -5,11 +5,13 @@ go 1.22
 replace go.chromium.org/chromiumos/config/go v0.0.0 => ../../../../config/go/src/go.chromium.org/chromiumos/config/go
 
 require (
+	go.bug.st/serial v1.6.2
 	go.chromium.org/chromiumos/config/go v0.0.0
 	google.golang.org/grpc v1.49.0
 )
 
 require (
+	github.com/creack/goselect v0.1.2 // indirect
 	github.com/golang/protobuf v1.5.2 // indirect
 	golang.org/x/net v0.0.0-20220826154423-83b083e8dc8b // indirect
 	golang.org/x/sys v0.14.0 // indirect
