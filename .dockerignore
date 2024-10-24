@@ -2,5 +2,5 @@
 /go/bin
 /go/pkg
 
-# Build artifacts
+# Other build artifacts.
 *.tar
