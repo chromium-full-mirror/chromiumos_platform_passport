@@ -5,6 +5,7 @@ go 1.22
 replace go.chromium.org/chromiumos/config/go v0.0.0 => ../../../../config/go/src/go.chromium.org/chromiumos/config/go
 
 require (
+	github.com/blackjack/webcam v0.6.1
 	go.bug.st/serial v1.6.2
 	go.chromium.org/chromiumos/config/go v0.0.0
 	google.golang.org/grpc v1.49.0

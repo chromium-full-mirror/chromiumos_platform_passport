@@ -7,4 +7,5 @@ package main
 import (
 	// Imported packages that register plugins.
 	_ "go.chromiumos.org/chromiumos/platform/passport/allion"
+	_ "go.chromiumos.org/chromiumos/platform/passport/generic"
 )
