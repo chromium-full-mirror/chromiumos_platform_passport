@@ -10,8 +10,9 @@ import (
 
 // module variables containing all registered plugins.
 var (
-	switchPlugins []SwitchPlugin
-	cameraPlugins []CameraPlugin
+	switchPlugins    []SwitchPlugin
+	cameraPlugins    []CameraPlugin
+	usbTesterPlugins []UsbTesterPlugin
 )
 
 // SwitchPlugin provide passport.SwitchServiceServer implementations for individual groups of switches.
@@ -40,4 +41,16 @@ type CameraPlugin interface {
 // RegisterCameraPlugin registers a switch controller plugin with the server application.
 func RegisterCameraPlugin(plugin CameraPlugin) {
 	cameraPlugins = append(cameraPlugins, plugin)
+}
+
+type UsbTesterPlugin interface {
+	// Name returns the plugin's name.
+	Name() string
+	// Inherit service interface for plugins.
+	passport.UsbTesterServiceServer
+}
+
+// RegisterUsbTesterPlugin registers a usb tester controller plugin with the server application.
+func RegisterUsbTesterPlugin(plugin UsbTesterPlugin) {
+	usbTesterPlugins = append(usbTesterPlugins, plugin)
 }

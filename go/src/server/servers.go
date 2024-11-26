@@ -30,8 +30,15 @@ func InitializeGRPCServer(ctx context.Context) (*grpc.Server, error) {
 		return nil, fmt.Errorf("failed to start camera server: %w", err)
 	}
 
+	usbTesterService, err := newUsbTesterServiceServer(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to start usb tester server: %w", err)
+	}
+
 	passport.RegisterSwitchServiceServer(server, switchServcice)
 	passport.RegisterCameraServiceServer(server, cameraService)
+	passport.RegisterUsbTesterServiceServer(server, usbTesterService)
+
 	return server, nil
 }
 
