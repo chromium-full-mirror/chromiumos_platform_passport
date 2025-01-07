@@ -3,13 +3,15 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+docker --version
+docker buildx version
 
 DIR="$(dirname "$(realpath -e "${BASH_SOURCE[0]}")")"
 
 # If local build use local checkout, otherwise use checked in files (default).
 if [[ -n "${REMOTE_SOURCE}" ]]; then
-    API_PATH="https://chromium.googlesource.com/chromiumos/config.git"
-    PASSPORT_PATH="https://chromium.googlesource.com/chromiumos/platform/passport.git"
+    API_PATH="https://chromium.googlesource.com/chromiumos/config.git#main"
+    PASSPORT_PATH="https://chromium.googlesource.com/chromiumos/platform/passport.git#main"
 else
     API_PATH="${DIR}/../../../config/"
     PASSPORT_PATH="${DIR}/.."
