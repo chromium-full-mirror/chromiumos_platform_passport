@@ -3,9 +3,8 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-docker --version
-docker buildx version
 
+PROJECT=us-docker.pkg.dev/cros-passport/passport
 DIR="$(dirname "$(realpath -e "${BASH_SOURCE[0]}")")"
 
 # If local build use local checkout, otherwise use checked in files (default).
@@ -22,21 +21,37 @@ fi
 # to a registry first.
 docker buildx build \
     --platform=linux/amd64 \
-    -t "passport:latest-amd64" \
+    -t "${PROJECT}/passport:latest-amd64" \
     --output type=docker \
     --build-context apiconfig="${API_PATH}" \
     --build-context passport="${PASSPORT_PATH}" \
     -f "${DIR}/../dockerfiles/Dockerfile" "${DIR}/."
 
-docker save -o "${DIR}/../passport-amd64.tar" passport:latest-amd64
+docker save -o "${DIR}/../passport-amd64.tar" "${PROJECT}/passport:latest-amd64"
 
 # Build arm64 for Raspberry Pi.
 docker buildx build \
     --platform=linux/arm64 \
-    -t "passport:latest-arm64" \
+    -t "${PROJECT}/passport:latest-arm64" \
     --output type=docker \
     --build-context apiconfig="${API_PATH}" \
     --build-context passport="${PASSPORT_PATH}" \
     -f "${DIR}/../dockerfiles/Dockerfile" "${DIR}/."
 
-docker save -o "${DIR}/../passport-arm64.tar" passport:latest-arm64
+docker save -o "${DIR}/../passport-arm64.tar" "${PROJECT}/passport:latest-arm64"
+
+if [[ -n "${PUSH}" ]]; then
+    # Push the arch-specific images.
+    docker image push "${PROJECT}/passport:latest-amd64"
+    docker image push "${PROJECT}/passport:latest-arm64"
+
+    # Merge the two images into a single "manifest list" tagged passport:latest.
+    docker manifest create "${PROJECT}/passport:latest" \
+        --amend "${PROJECT}/passport:latest-amd64" \
+        --amend "${PROJECT}/passport:latest-arm64"
+
+    # Push the manifest list.
+    # Running docker pull ${PROJECT}/passport:latest will automatically pull the
+    # correct version for your machine.
+    docker manifest push "${PROJECT}/passport:latest"
+fi

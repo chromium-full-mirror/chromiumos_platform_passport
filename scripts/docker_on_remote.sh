@@ -89,7 +89,7 @@ for HOST in "$@"; do
       ${EXEC_TYPE_SPECIFIC_ARGS} \
       --name "passport-dev" \
       --volume=/dev:/dev \
-      "passport:latest-${ARCH}"
+      "us-docker.pkg.dev/cros-passport/passport/passport:latest-${ARCH}"
 
   # Get the IP address of the container and echo forwarding command for testing.
   IP=$(${SSH_CMD} "${HOST}" \
