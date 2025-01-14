@@ -20,6 +20,7 @@ set -e
 SCRIPT_DIR="$(dirname "$(realpath -e "${BASH_SOURCE[0]}")")"
 PROJECT_DIR="$(realpath -e "${SCRIPT_DIR}/..")"
 SSH_CMD="ssh -q -o StrictHostKeyChecking=no"
+DOCKER_DRONE_CMD=""
 LOG_DIVIDER="=================================================================="
 
 echo "Building docker image"
@@ -54,30 +55,53 @@ for HOST in "$@"; do
     exit 1
   fi
 
+  if [[ -n "${RUN_IN_DRONE}" ]]; then
+    DOCKER_DRONE_CMD="exec drone docker"
+    echo "Running docker in drone container"
+  fi
+
   echo "Stopping existing containers"
-  ${SSH_CMD} "${HOST}" "${DOCKER_CMD}" rm -f passport-dev
+  if ! ${SSH_CMD} "${HOST}" "${DOCKER_CMD}" ${DOCKER_DRONE_CMD} rm -f passport-dev;
+  then
+    echo "WARN: failed to stop existing passport container"
+  fi
 
   echo "Copying image to host"
   scp -o StrictHostKeyChecking=no \
       "${PROJECT_DIR}/passport-${ARCH}.tar" \
       "${HOST}:/tmp/passport.tar"
+  if [[ -n "${DOCKER_DRONE_CMD}" ]]; then
+      ${SSH_CMD} "${HOST}" "${DOCKER_CMD}" cp /tmp/passport.tar drone:/tmp/passport.tar
+  fi
 
   echo "Starting container"
-  ${SSH_CMD} "${HOST}" "${DOCKER_CMD}" load -i /tmp/passport.tar
-  ${SSH_CMD} "${HOST}" "${DOCKER_CMD}" run \
-      --privileged \
-      --name "passport-dev" \
+  ${SSH_CMD} "${HOST}" "${DOCKER_CMD}" ${DOCKER_DRONE_CMD} load -i /tmp/passport.tar
+
+  if [[ -n "${DOCKER_DRONE_CMD}" ]]; then
+    EXEC_TYPE_SPECIFIC_ARGS="--network=adb-network"
+  else
+    EXEC_TYPE_SPECIFIC_ARGS="-p 8300:8300"
+  fi
+  ${SSH_CMD} "${HOST}" "${DOCKER_CMD}" ${DOCKER_DRONE_CMD} run \
       -d \
-      -p 8300:8300 \
+      --cap-add=NET_RAW \
+      --rm \
+      ${EXEC_TYPE_SPECIFIC_ARGS} \
+      --name "passport-dev" \
+      --volume=/dev:/dev \
       "passport:latest-${ARCH}"
 
   # Get the IP address of the container and echo forwarding command for testing.
   IP=$(${SSH_CMD} "${HOST}" \
-      "${DOCKER_CMD}" inspect \
+      "${DOCKER_CMD}" ${DOCKER_DRONE_CMD} inspect \
       -f '{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}' \
       passport-dev)
   echo -e "\n${LOG_DIVIDER}"
   echo "Successfully updated passport on host ${HOST}"
-  echo "SSH COMMAND: ssh -L 8300:${IP}:8300 ${HOST}"
+  if [[ -n "${DOCKER_DRONE_CMD}" ]]; then
+    echo "Passport service running in drone container ${IP}:8300"
+  else
+    echo "SSH COMMAND: ssh -L 8300:${IP}:8300 ${HOST}"
+  fi
   echo -e "${LOG_DIVIDER}"
 done
