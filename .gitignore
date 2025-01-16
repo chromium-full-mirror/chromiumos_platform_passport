@@ -4,3 +4,8 @@
 
 # Build artifacts
 *.tar
+
+# Python
+env/
+venv/
+__pycache__/
