@@ -7,10 +7,12 @@ package server
 import (
 	"context"
 	"fmt"
+	"log"
 	"log/slog"
 	"net"
 
 	"go.chromium.org/chromiumos/config/go/test/lab/api/passport"
+	"go.chromium.org/chromiumos/test/util/portdiscovery"
 	"google.golang.org/grpc"
 )
 
@@ -52,6 +54,11 @@ func Serve(ctx context.Context, server *grpc.Server, port int) error {
 	lis, err := net.Listen("tcp", addr)
 	if err != nil {
 		return fmt.Errorf("failed to listen on tcp port %d: %w", port, err)
+	}
+
+	err = portdiscovery.WriteServiceMetadata("cros-passport", lis.Addr().String(), log.Default())
+	if err != nil {
+		slog.Warn("error when writing to metadata file: ", err)
 	}
 
 	slog.Debug("gRPC service info", "serviceInfo", server.GetServiceInfo())

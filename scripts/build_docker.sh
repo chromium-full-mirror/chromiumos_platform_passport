@@ -9,49 +9,51 @@ DIR="$(dirname "$(realpath -e "${BASH_SOURCE[0]}")")"
 
 # If local build use local checkout, otherwise use checked in files (default).
 if [[ -n "${REMOTE_SOURCE}" ]]; then
-    API_PATH="https://chromium.googlesource.com/chromiumos/config.git#main"
-    PASSPORT_PATH="https://chromium.googlesource.com/chromiumos/platform/passport.git#main"
+    FLAGS="
+        --build-context apiconfig=https://chromium.googlesource.com/chromiumos/config.git#main
+        --build-context passport=https://chromium.googlesource.com/chromiumos/platform/passport.git#main
+        --build-context dev=https://chromium.googlesource.com/chromiumos/platform/dev-util.git#main:test
+        -f ${DIR}/../dockerfiles/Dockerfile
+        "
 else
-    API_PATH="${DIR}/../../../config/"
-    PASSPORT_PATH="${DIR}/.."
+    FLAGS="
+        --build-context apiconfig=${DIR}/../../../config/
+        --build-context passport=${DIR}/..
+        --build-context dev=${DIR}/../../dev/src
+        -f ${DIR}/../dockerfiles/Dockerfile
+        "
 fi
 
-# Create in two separate steps allowing a tar of the image to
-# be pushed and tested on a remote machine without needing to push
 # to a registry first.
-docker buildx build \
-    --platform=linux/amd64 \
-    -t "${PROJECT}/passport:latest-amd64" \
-    --output type=docker \
-    --build-context apiconfig="${API_PATH}" \
-    --build-context passport="${PASSPORT_PATH}" \
-    -f "${DIR}/../dockerfiles/Dockerfile" "${DIR}/."
-
-docker save -o "${DIR}/../passport-amd64.tar" "${PROJECT}/passport:latest-amd64"
-
-# Build arm64 for Raspberry Pi.
-docker buildx build \
-    --platform=linux/arm64 \
-    -t "${PROJECT}/passport:latest-arm64" \
-    --output type=docker \
-    --build-context apiconfig="${API_PATH}" \
-    --build-context passport="${PASSPORT_PATH}" \
-    -f "${DIR}/../dockerfiles/Dockerfile" "${DIR}/."
-
-docker save -o "${DIR}/../passport-arm64.tar" "${PROJECT}/passport:latest-arm64"
-
 if [[ -n "${PUSH}" ]]; then
-    # Push the arch-specific images.
-    docker image push "${PROJECT}/passport:latest-amd64"
-    docker image push "${PROJECT}/passport:latest-arm64"
+    docker buildx create --use --name passport-builder
 
-    # Merge the two images into a single "manifest list" tagged passport:latest.
-    docker manifest create "${PROJECT}/passport:latest" \
-        --amend "${PROJECT}/passport:latest-amd64" \
-        --amend "${PROJECT}/passport:latest-arm64"
+    docker buildx build \
+        --platform=linux/arm64,linux/amd64 \
+        -t "${PROJECT}/passport:latest" \
+        ${FLAGS} \
+        --push \
+        -f "${DIR}/../dockerfiles/Dockerfile" "${DIR}/."
+else
+    # If not pushing, then create in two separate steps
+    docker buildx build \
+        --platform=linux/amd64 \
+        -t "${PROJECT}/passport:latest-amd64" \
+        --output type=docker \
+        ${FLAGS} \
+        -f "${DIR}/../dockerfiles/Dockerfile" "${DIR}/."
 
-    # Push the manifest list.
-    # Running docker pull ${PROJECT}/passport:latest will automatically pull the
-    # correct version for your machine.
-    docker manifest push "${PROJECT}/passport:latest"
+    docker save -o "${DIR}/../passport-amd64.tar" \
+        "${PROJECT}/passport:latest-amd64"
+
+    # Build arm64 for Raspberry Pi.
+    docker buildx build \
+        --platform=linux/arm64 \
+        -t "${PROJECT}/passport:latest-arm64" \
+        --output type=docker \
+        ${FLAGS} \
+        -f "${DIR}/../dockerfiles/Dockerfile" "${DIR}/."
+
+    docker save -o "${DIR}/../passport-arm64.tar" \
+        "${PROJECT}/passport:latest-arm64"
 fi
