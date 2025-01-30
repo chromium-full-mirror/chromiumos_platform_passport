@@ -78,9 +78,9 @@ for HOST in "$@"; do
   ${SSH_CMD} "${HOST}" "${DOCKER_CMD}" ${DOCKER_DRONE_CMD} load -i /tmp/passport.tar
 
   if [[ -n "${DOCKER_DRONE_CMD}" ]]; then
-    EXEC_TYPE_SPECIFIC_ARGS="--network=adb-network"
+    EXEC_TYPE_SPECIFIC_ARGS="--network=adb-network --volume=/dev:/dev"
   else
-    EXEC_TYPE_SPECIFIC_ARGS="-p 8300:8300"
+    EXEC_TYPE_SPECIFIC_ARGS="-p 8300:8300 --privileged"
   fi
   ${SSH_CMD} "${HOST}" "${DOCKER_CMD}" ${DOCKER_DRONE_CMD} run \
       -d \
@@ -88,7 +88,6 @@ for HOST in "$@"; do
       --rm \
       ${EXEC_TYPE_SPECIFIC_ARGS} \
       --name "passport-dev" \
-      --volume=/dev:/dev \
       "us-docker.pkg.dev/cros-passport/passport/passport:latest-${ARCH}"
 
   # Get the IP address of the container and echo forwarding command for testing.
