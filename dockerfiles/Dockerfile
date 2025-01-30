@@ -16,7 +16,41 @@ ARG TARGETOS TARGETARCH
 RUN GOOS=$TARGETOS GOARCH=$TARGETARCH CGO_ENABLED=0 \
     go build -C ./source/platform/passport/go/src -o /bin/cros-passport
 
-FROM debian:bookworm-slim
+FROM --platform=$BUILDPLATFORM debian:bookworm-slim AS unigrafctl_build
+
+# Prepare python the enviroment.
+RUN apt-get update \
+    && apt-get install -y python3-venv libusb-1.0-0-dev wget \
+    && mkdir -p /usr/local/bin/unigraf \
+    && mkdir -p /usr/local/bin/unigraf/chromiumos_apis \
+    && python3 -m venv /usr/local/bin/unigraf/venv \
+    && apt-get install -y binutils python3-dev
+
+# CD into the unigraf dir.
+WORKDIR "/usr/local/bin/unigraf"
+
+# Copy dependencies and sources.
+COPY --from=apiconfig python/ chromiumos_apis
+COPY --from=passport python/ .
+
+ARG UNIGRAF_SDK_VERSION=1.1.3.652
+
+# Install the unigraf control dependencies and the chromiumos APIs.
+RUN venv/bin/pip install -r unigraf_control/requirements.txt \
+    && venv/bin/pip install chromiumos_apis/ \
+    && wget https://storage.googleapis.com/chromeos-localmirror/distfiles/UTCLibrary-${UNIGRAF_SDK_VERSION}.tar.gz \
+    && venv/bin/pip install UTCLibrary-${UNIGRAF_SDK_VERSION}.tar.gz \
+    && venv/bin/pip install pyinstaller \
+    && venv/bin/pyinstaller \
+      --collect-all UTCLibrary \
+      --onefile unigraf_control/src/main.py
+
+# Final assembly.
+FROM --platform=$BUILDPLATFORM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y usbutils
+
+COPY --from=unigrafctl_build /usr/local/bin/unigraf/dist/main /bin/unigrafctl
 COPY --from=build /bin/cros-passport /bin/cros-passport
 
 CMD ["/bin/cros-passport"]
