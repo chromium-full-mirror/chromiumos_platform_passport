@@ -67,6 +67,89 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
 
         return usb_tester_service_pb2.CloseTesterReply(err_code=0, error_msg="")
 
+    # TODO: add timeout and delay params
+    def _capability_get(self, serial, attr):
+        if serial not in self._open_devices:
+            logging.error("Invalid serial %s when taking device", serial)
+            raise ValueError(f"No device with serial {serial}")
+
+        if serial not in self._serial_locks:
+            logging.error("Invalid serial %s when taking lock", serial)
+            raise ValueError(f"No device lock with serial {serial}")
+
+        val = None
+        with self._serial_locks[serial]:
+            dev = self._open_devices[serial]
+            try:
+                get_f = getattr(dev.pd, self.SDK_F_MAP[attr][0])
+                update_f = getattr(dev.pd, self.SDK_F_MAP[attr][1])
+            except Exception as e:
+                logging.error(
+                    "An error occurred during device reflection: %s", str(e)
+                )
+                raise e
+
+            update_f()
+            val = get_f()
+
+        return val
+
+    # TODO: add timeout and delay params
+    def _capability_set(self, serial, attr, val):
+        if serial not in self._open_devices:
+            logging.error("Invalid serial %s when taking device", serial)
+            raise ValueError(f"No device with serial {serial}")
+
+        if serial not in self._serial_locks:
+            logging.error("Invalid serial %s when taking lock", serial)
+            raise ValueError(f"No device lock with serial {serial}")
+
+        with self._serial_locks[serial]:
+            dev = self._open_devices[serial]
+            try:
+                set_f = getattr(dev.pd, self.SDK_F_MAP[attr][2])
+                update_f = getattr(dev.pd, self.SDK_F_MAP[attr][1])
+            except Exception as e:
+                logging.error(
+                    "An error occurred during device reflection: %s", str(e)
+                )
+                raise e
+
+            ret = set_f(val)
+            update_f()
+
+            return ret
+
+    def GetTesterCapability(self, request, context):
+        """This method is used to get the value for: dp pin assignment,
+        active cc, power role, data role, usb channel, cable mode, init pd state
+        """
+
+        val = self._capability_get(request.id, request.capability)
+        reply = usb_tester_service_pb2.GetUsbTesterCapabilityReply(err_code=0)
+
+        # Set the field by looking at the name of the field
+        # that was set in the get request.
+        setattr(
+            reply,
+            translate.sdk_capability_to_reply_set_member(request.capability),
+            translate.sdk_get_val_to_grcp_get_val(request.capability, val),
+        )
+
+        return reply
+
+    def SetTesterCapability(self, request, context):
+        """This method is used to set the value for: dp pin assignment,
+        active cc, power role, data role, usb channel, cable mode, init pd state
+        """
+
+        to_set = translate.grcp_set_val_to_sdk_set_val(request)
+        ret = self._capability_set(request.id, request.capability, to_set)
+
+        return usb_tester_service_pb2.SetUsbTesterCapabilityReply(
+            err_code=ret, error_msg=("set failed" if ret != 0 else "")
+        )
+
 
 def serve(port):
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
