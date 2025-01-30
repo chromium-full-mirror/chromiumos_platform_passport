@@ -10,11 +10,13 @@ import threading
 from chromiumos.test.lab.api.passport import usb_tester_service_pb2
 from chromiumos.test.lab.api.passport import usb_tester_service_pb2_grpc
 import grpc
+import log_functionality
 import translate
 import UTCLibrary
 
 
 class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
+    @log_functionality.logger
     def __init__(self):
         self._lib = UTCLibrary.UTCLib()
         # Read the device list on init. This eliminates the need of doing
@@ -25,6 +27,7 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
 
         self.SDK_F_MAP = translate.SDK_F_MAP
 
+    @log_functionality.logger
     def GetTesters(self, request, context):
         """GetTesters probes all testers connected to the host device."""
         # This call will returns a list of tuples:
@@ -41,6 +44,7 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
 
         return usb_tester_service_pb2.GetTestersReply(testers=testers)
 
+    @log_functionality.logger
     def OpenTester(self, request, context):
         """Used to open the serial of the USB tester being used."""
         serial = request.id
@@ -53,6 +57,7 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
 
         return usb_tester_service_pb2.OpenTesterReply(err_code=0, error_msg="")
 
+    @log_functionality.logger
     def CloseTester(self, request, context):
         """Used to close the serial of the USB tester being used."""
         serial = request.id
@@ -68,6 +73,7 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
         return usb_tester_service_pb2.CloseTesterReply(err_code=0, error_msg="")
 
     # TODO: add timeout and delay params
+    @log_functionality.logger
     def _capability_get(self, serial, attr):
         if serial not in self._open_devices:
             logging.error("Invalid serial %s when taking device", serial)
@@ -95,6 +101,7 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
         return val
 
     # TODO: add timeout and delay params
+    @log_functionality.logger
     def _capability_set(self, serial, attr, val):
         if serial not in self._open_devices:
             logging.error("Invalid serial %s when taking device", serial)
@@ -120,6 +127,7 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
 
             return ret
 
+    @log_functionality.logger
     def GetTesterCapability(self, request, context):
         """This method is used to get the value for: dp pin assignment,
         active cc, power role, data role, usb channel, cable mode, init pd state
@@ -138,6 +146,7 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
 
         return reply
 
+    @log_functionality.logger
     def SetTesterCapability(self, request, context):
         """This method is used to set the value for: dp pin assignment,
         active cc, power role, data role, usb channel, cable mode, init pd state
@@ -151,6 +160,7 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
         )
 
 
+@log_functionality.logger
 def serve(port):
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
 
@@ -166,7 +176,7 @@ def serve(port):
 
 
 if __name__ == "__main__":
-    logging.basicConfig()
+    log_functionality.configure_logging()
 
     parser = argparse.ArgumentParser()
     parser.add_argument(
