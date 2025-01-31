@@ -10,9 +10,11 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"time"
 
 	"go.chromium.org/chromiumos/config/go/test/lab/api/passport"
@@ -25,6 +27,7 @@ var (
 	portArg     int
 	logLevelArg string
 	modeArg     string
+	logPathArg  string
 )
 
 // runMode represents the mode to start the service in.
@@ -50,8 +53,27 @@ type runArgs struct {
 	// LogLevel is the level for the logger.
 	LogLevel slog.Level
 
+	// The path to the directory to create logs in.
+	LogPath string
+
 	// Mode is how the executable should be run.
 	Mode runMode
+}
+
+// createLogFile creates a file and its parent directory for logging purpose.
+func createLogFile(fullPath string) (*os.File, error) {
+	if err := os.MkdirAll(fullPath, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create directory %v: %w", fullPath, err)
+	}
+
+	logFullPathName := filepath.Join(fullPath, "log.txt")
+
+	// Log the full output of the command to disk.
+	logFile, err := os.Create(logFullPathName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create file %v: %w", fullPath, err)
+	}
+	return logFile, nil
 }
 
 func main() {
@@ -61,12 +83,22 @@ func main() {
 		os.Exit(1)
 	}
 
+	logFile, err := createLogFile(parsedArgs.LogPath)
+	if err != nil {
+		fmt.Printf("Failed to create log file: %v", err)
+		os.Exit(1)
+	}
+	writers := []io.Writer{os.Stderr, logFile}
+	out := io.MultiWriter(writers...)
+	defer logFile.Close()
+
 	// Set logging based on args.
-	handler := slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+	handler := slog.NewTextHandler(out, &slog.HandlerOptions{
 		Level:     parsedArgs.LogLevel,
 		AddSource: true,
 	})
 	slog.SetDefault(slog.New(handler))
+
 	slog.Info("Starting passport", "args", parsedArgs)
 
 	// Create context that will cancel when a SIGINT signal is received.
@@ -132,10 +164,12 @@ func parseRunArgs() (*runArgs, error) {
 	flag.IntVar(&portArg, "port", 8300, "The port to start the service listening on.")
 	flag.StringVar(&logLevelArg, "log-level", "INFO", "The level to use while logging.")
 	flag.StringVar(&modeArg, "mode", "SERVER", "The mode to run passport executable in.")
+	flag.StringVar(&logPathArg, "log-path", "/tmp/cros-passport", "The path to use when logging.")
 	flag.Parse()
 
 	parsedArgs := &runArgs{
 		ListenPort: portArg,
+		LogPath:    logPathArg,
 	}
 
 	switch logLevelArg {
