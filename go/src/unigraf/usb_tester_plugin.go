@@ -88,40 +88,61 @@ func (s *usbTesterPlugin) Name() string {
 }
 
 // This plugin implementation will only pass the request to the actual control application
-func (s *usbTesterPlugin) GetTesters(ctx context.Context, req *passport.GetTestersRequest) (*passport.GetTestersReply, error) {
+func (s *usbTesterPlugin) GetTesters(
+	ctx context.Context,
+	req *passport.GetTestersRequest,
+) (*passport.GetTestersReply, error) {
 	return s.unigraf_control_client.GetTesters(ctx, req)
 }
 
 // This plugin implementation will only pass the request to the actual control application
-func (s *usbTesterPlugin) GetTesterCapability(ctx context.Context, req *passport.GetUsbTesterCapabilityRequest) (*passport.GetUsbTesterCapabilityReply, error) {
+func (s *usbTesterPlugin) GetTesterCapability(
+	ctx context.Context,
+	req *passport.GetUsbTesterCapabilityRequest,
+) (*passport.GetUsbTesterCapabilityReply, error) {
 	return s.unigraf_control_client.GetTesterCapability(ctx, req)
 }
 
 // This plugin implementation will only pass the request to the actual control application
-func (s *usbTesterPlugin) SetTesterCapability(ctx context.Context, req *passport.SetUsbTesterCapabilityRequest) (*passport.SetUsbTesterCapabilityReply, error) {
+func (s *usbTesterPlugin) SetTesterCapability(
+	ctx context.Context,
+	req *passport.SetUsbTesterCapabilityRequest,
+) (*passport.SetUsbTesterCapabilityReply, error) {
 	return s.unigraf_control_client.SetTesterCapability(ctx, req)
 }
 
 // ReplugCable replugs the cable on the USB tester.
-func (s *usbTesterPlugin) ReplugCable(ctx context.Context, req *passport.DoCableReplugRequest) (*passport.DoCableReplugReply, error) {
+func (s *usbTesterPlugin) ReplugCable(
+	ctx context.Context,
+	req *passport.DoCableReplugRequest,
+) (*passport.DoCableReplugReply, error) {
 	// This function simply forwards the request to the unigraf_control_client.
 	return s.unigraf_control_client.ReplugCable(ctx, req)
 }
 
 // HardResetTester performs a hard reset of the USB tester.
-func (s *usbTesterPlugin) HardResetTester(ctx context.Context, req *passport.HardResetTesterRequest) (*passport.HardResetTesterReply, error) {
+func (s *usbTesterPlugin) HardResetTester(
+	ctx context.Context,
+	req *passport.HardResetTesterRequest,
+) (*passport.HardResetTesterReply, error) {
 	// This function simply forwards the request to the unigraf_control_client.
 	return s.unigraf_control_client.HardResetTester(ctx, req)
 }
 
 // OpenTester opens a connection to the USB tester.
-func (s *usbTesterPlugin) OpenTester(ctx context.Context, req *passport.OpenTesterRequest) (*passport.OpenTesterReply, error) {
+func (s *usbTesterPlugin) OpenTester(
+	ctx context.Context,
+	req *passport.OpenTesterRequest,
+) (*passport.OpenTesterReply, error) {
 	// This function simply forwards the request to the unigraf_control_client.
 	return s.unigraf_control_client.OpenTester(ctx, req)
 }
 
 // CloseTester closes the connection to the USB tester.
-func (s *usbTesterPlugin) CloseTester(ctx context.Context, req *passport.CloseTesterRequest) (*passport.CloseTesterReply, error) {
+func (s *usbTesterPlugin) CloseTester(
+	ctx context.Context,
+	req *passport.CloseTesterRequest,
+) (*passport.CloseTesterReply, error) {
 	// This function simply forwards the request to the unigraf_control_client.
 	return s.unigraf_control_client.CloseTester(ctx, req)
 }

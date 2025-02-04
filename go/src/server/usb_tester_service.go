@@ -47,8 +47,9 @@ type usbTesterServiceServer struct {
 	plugins []UsbTesterPlugin
 }
 
-func newUsbTesterServiceServer(ctx context.Context) (passport.UsbTesterServiceServer, error) {
-
+func newUsbTesterServiceServer(
+	ctx context.Context,
+) (passport.UsbTesterServiceServer, error) {
 	i := 0
 	for _, elem := range usbTesterPlugins {
 		if err := elem.Init(); err != nil {
@@ -75,7 +76,10 @@ func newUsbTesterServiceServer(ctx context.Context) (passport.UsbTesterServiceSe
 // - PLUGIN_Y.GetTesters, it will yield [(S3, "PLUGIN_Y_NAME"), (S4, "PLUGIN_Y_NAME")]
 // so HOST.refreshTesters will return [(S1, "PLUGIN_X_NAME"), (S2, "PLUGIN_X_NAME"), (S3, "PLUGIN_Y_NAME"), (S4,"PLUGIN_Y_NAME")]
 // and so will HOST.GetTesters.
-func (s *usbTesterServiceServer) GetTesters(ctx context.Context, req *passport.GetTestersRequest) (*passport.GetTestersReply, error) {
+func (s *usbTesterServiceServer) GetTesters(
+	ctx context.Context,
+	req *passport.GetTestersRequest,
+) (*passport.GetTestersReply, error) {
 	slog.Info("Received passport.GetTestersRequest", "req", req)
 
 	testers, err := s.refreshTesters(ctx, req)
@@ -88,8 +92,13 @@ func (s *usbTesterServiceServer) GetTesters(ctx context.Context, req *passport.G
 	}, nil
 }
 
-// This function's behaviour is explained in the description of usbTesterServiceServer.GetTesters
-func (s *usbTesterServiceServer) refreshTesters(ctx context.Context, req *passport.GetTestersRequest) ([]*passport.UsbTester, error) {
+// This function's behaviour is explained in the description of
+// usbTesterServiceServer.GetTesters.
+func (s *usbTesterServiceServer) refreshTesters(
+	ctx context.Context,
+	req *passport.GetTestersRequest,
+) ([]*passport.UsbTester, error) {
+
 	testerMap := make(map[string]UsbTesterPlugin)
 	var testers []*passport.UsbTester
 
@@ -97,17 +106,29 @@ func (s *usbTesterServiceServer) refreshTesters(ctx context.Context, req *passpo
 		resp, err := plugin.GetTesters(ctx, req)
 
 		if err != nil {
-			return nil, fmt.Errorf("failed to get testers for plugin %q: %w", plugin.Name(), err)
+			return nil, fmt.Errorf(
+				"failed to get testers for plugin %q: %w",
+				plugin.Name(),
+				err,
+			)
 		}
 
 		for _, sw := range resp.GetTesters() {
 			id := sw.GetId()
 			if id == "" {
-				return nil, fmt.Errorf("received empty tester ID, plugin: %q", plugin.Name())
+				return nil, fmt.Errorf(
+					"received empty tester ID, plugin: %q",
+					plugin.Name(),
+				)
 			}
 
 			if pOld, ok := testerMap[id]; ok {
-				return nil, fmt.Errorf("received duplicate tester ID: %q, plugin1 %q, plugin2 %q", id, pOld.Name(), plugin.Name())
+				return nil, fmt.Errorf(
+					"received duplicate tester ID: %q, plugin1 %q, plugin2 %q",
+					id,
+					pOld.Name(),
+					plugin.Name(),
+				)
 			}
 
 			testers = append(testers, sw)
@@ -120,61 +141,109 @@ func (s *usbTesterServiceServer) refreshTesters(ctx context.Context, req *passpo
 	return testers, nil
 }
 
-// Retrieves the capabilities of a USB tester with the given ID. If no tester with the specified ID is found, it returns a NotFound error.
-func (s *usbTesterServiceServer) GetTesterCapability(ctx context.Context, req *passport.GetUsbTesterCapabilityRequest) (*passport.GetUsbTesterCapabilityReply, error) {
+// Retrieves the capabilities of a USB tester with the given ID.
+// If no tester with the specified ID is found, it returns a NotFound error.
+func (s *usbTesterServiceServer) GetTesterCapability(
+	ctx context.Context,
+	req *passport.GetUsbTesterCapabilityRequest,
+) (*passport.GetUsbTesterCapabilityReply, error) {
+
 	tester := s.testerMap[req.Id]
 	if tester == nil {
-		return nil, status.Errorf(codes.NotFound, fmt.Sprintf("there is no USB tester with id: %s", req.Id))
+		return nil, status.Errorf(
+			codes.NotFound,
+			fmt.Sprintf("there is no USB tester with id: %s", req.Id),
+		)
 	}
 
 	return tester.GetTesterCapability(ctx, req)
 }
 
-// Sets the capabilities of a USB tester with the given ID. If no tester with the specified ID is found, it returns a NotFound error.
-func (s *usbTesterServiceServer) SetTesterCapability(ctx context.Context, req *passport.SetUsbTesterCapabilityRequest) (*passport.SetUsbTesterCapabilityReply, error) {
+// Sets the capabilities of a USB tester with the given ID.
+// If no tester with the specified ID is found, it returns a NotFound error.
+func (s *usbTesterServiceServer) SetTesterCapability(
+	ctx context.Context,
+	req *passport.SetUsbTesterCapabilityRequest,
+) (*passport.SetUsbTesterCapabilityReply, error) {
+
 	tester := s.testerMap[req.Id]
 	if tester == nil {
-		return nil, status.Errorf(codes.NotFound, fmt.Sprintf("there is no USB tester with id: %s", req.Id))
+		return nil, status.Errorf(
+			codes.NotFound,
+			fmt.Sprintf("there is no USB tester with id: %s", req.Id),
+		)
 	}
 
 	return tester.SetTesterCapability(ctx, req)
 }
 
-// Instructs a USB tester to replug the connected cable. If no tester with the specified ID is found, it returns a NotFound error.
-func (s *usbTesterServiceServer) ReplugCable(ctx context.Context, req *passport.DoCableReplugRequest) (*passport.DoCableReplugReply, error) {
+// Instructs a USB tester to replug the connected cable.
+// If no tester with the specified ID is found, it returns a NotFound error.
+func (s *usbTesterServiceServer) ReplugCable(
+	ctx context.Context,
+	req *passport.DoCableReplugRequest,
+) (*passport.DoCableReplugReply, error) {
+
 	tester := s.testerMap[req.Id]
 	if tester == nil {
-		return nil, status.Errorf(codes.NotFound, fmt.Sprintf("there is no USB tester with id: %s", req.Id))
+		return nil, status.Errorf(
+			codes.NotFound,
+			fmt.Sprintf("there is no USB tester with id: %s", req.Id),
+		)
 	}
 
 	return tester.ReplugCable(ctx, req)
 }
 
-// Performs a hard reset on a USB tester with the given ID. If no tester with the specified ID is found, it returns a NotFound error.
-func (s *usbTesterServiceServer) HardResetTester(ctx context.Context, req *passport.HardResetTesterRequest) (*passport.HardResetTesterReply, error) {
+// Performs a hard reset on a USB tester with the given ID.
+// If no tester with the specified ID is found, it returns a NotFound error.
+func (s *usbTesterServiceServer) HardResetTester(
+	ctx context.Context,
+	req *passport.HardResetTesterRequest,
+) (*passport.HardResetTesterReply, error) {
+
 	tester := s.testerMap[req.Id]
 	if tester == nil {
-		return nil, status.Errorf(codes.NotFound, fmt.Sprintf("there is no USB tester with id: %s", req.Id))
+		return nil, status.Errorf(
+			codes.NotFound,
+			fmt.Sprintf("there is no USB tester with id: %s", req.Id),
+		)
 	}
 
 	return tester.HardResetTester(ctx, req)
 }
 
-// Opens a connection to a USB tester with the given ID. If no tester with the specified ID is found, it returns a NotFound error.
-func (s *usbTesterServiceServer) OpenTester(ctx context.Context, req *passport.OpenTesterRequest) (*passport.OpenTesterReply, error) {
+// Opens a connection to a USB tester with the given ID.
+// If no tester with the specified ID is found, it returns a NotFound error.
+func (s *usbTesterServiceServer) OpenTester(
+	ctx context.Context,
+	req *passport.OpenTesterRequest,
+) (*passport.OpenTesterReply, error) {
+
 	tester := s.testerMap[req.Id]
 	if tester == nil {
-		return nil, status.Errorf(codes.NotFound, fmt.Sprintf("there is no USB tester with id: %s", req.Id))
+		return nil, status.Errorf(
+			codes.NotFound,
+			fmt.Sprintf("there is no USB tester with id: %s", req.Id),
+		)
 	}
 
 	return tester.OpenTester(ctx, req)
 }
 
-// Closes the connection to a USB tester with the given ID. If no tester with the specified ID is found, it returns a NotFound error.
-func (s *usbTesterServiceServer) CloseTester(ctx context.Context, req *passport.CloseTesterRequest) (*passport.CloseTesterReply, error) {
+// Closes the connection to a USB tester with the given ID.
+// If no tester with the specified ID is found, it returns a NotFound error.
+func (s *usbTesterServiceServer) CloseTester(
+	ctx context.Context,
+	req *passport.CloseTesterRequest,
+) (*passport.CloseTesterReply, error) {
+
 	tester := s.testerMap[req.Id]
 	if tester == nil {
-		return nil, status.Errorf(codes.NotFound, fmt.Sprintf("there is no USB tester with id: %s", req.Id))
+		return nil, status.Errorf(
+			codes.NotFound,
+			fmt.Sprintf("there is no USB tester with id: %s", req.Id),
+		)
 	}
 
 	return tester.CloseTester(ctx, req)
