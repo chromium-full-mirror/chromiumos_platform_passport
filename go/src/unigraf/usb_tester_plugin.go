@@ -7,7 +7,9 @@ package unigraf
 
 import (
 	"context"
-	"log"
+	"fmt"
+	"log/slog"
+	"os/exec"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -21,18 +23,63 @@ type usbTesterPlugin struct {
 	unigraf_control_client passport.UsbTesterServiceClient
 }
 
+const (
+	UNIGRAF_APP_PATH = "/bin/unigrafctl"
+	UNIGRAF_APP_ADDR = "localhost"
+	UNIGRAF_APP_PORT = 8081
+)
+
 func init() {
 	plugin := usbTesterPlugin{}
 
-	conn, err := grpc.Dial("localhost:8081", grpc.WithTransportCredentials(insecure.NewCredentials()))
-	if err != nil {
-		log.Fatalf("Unigraf plugin didn't connect: %v", err)
-	}
-
-	plugin.unigraf_control_client = passport.NewUsbTesterServiceClient(conn)
-
 	// Register the unigraf tester plugin with the main passport application.
 	server.RegisterUsbTesterPlugin(&plugin)
+}
+
+// Some testers require additional initialization to be done at a later time.
+func (s *usbTesterPlugin) Init() error {
+	if s.unigraf_control_client != nil {
+		slog.Warn("Plugin is already initialized", "name", s.Name())
+		return nil
+	}
+
+	cmd := exec.Command(
+		UNIGRAF_APP_PATH,
+		"--port",
+		fmt.Sprintf("%d", UNIGRAF_APP_PORT),
+	)
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf(
+			"failed to start unigraf control app err=%w path=%s port=%d",
+			err,
+			UNIGRAF_APP_PATH,
+			UNIGRAF_APP_PORT,
+		)
+	}
+
+	slog.Info(
+		"Started unigraf external controll app",
+		"path", UNIGRAF_APP_PATH,
+		"port", UNIGRAF_APP_PORT,
+	)
+
+	// Build the unigraf control app URI and get a connection to the server.
+	unigrafAppURI := fmt.Sprintf("%s:%d", UNIGRAF_APP_ADDR, UNIGRAF_APP_PORT)
+	slog.Info("Unigraf control app is at", "uri", unigrafAppURI)
+
+	conn, err := grpc.Dial(
+		unigrafAppURI,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+
+	if err != nil {
+		return fmt.Errorf("unigraf plugin didn't connect err=%w", err)
+	}
+
+	s.unigraf_control_client = passport.NewUsbTesterServiceClient(conn)
+	slog.Info("Unigraf usb tester plugin initialized.")
+
+	return nil
 }
 
 // Name returns the plugin's name for logging purposes.

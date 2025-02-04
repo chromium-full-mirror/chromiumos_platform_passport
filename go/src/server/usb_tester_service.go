@@ -48,6 +48,18 @@ type usbTesterServiceServer struct {
 }
 
 func newUsbTesterServiceServer(ctx context.Context) (passport.UsbTesterServiceServer, error) {
+
+	i := 0
+	for _, elem := range usbTesterPlugins {
+		if err := elem.Init(); err != nil {
+			slog.Error("Failed to initialize usb tester", slog.Any("err", err))
+			continue
+		}
+		usbTesterPlugins[i] = elem
+		i++
+	}
+	usbTesterPlugins = usbTesterPlugins[:i]
+
 	s := &usbTesterServiceServer{
 		testerMap: make(map[string]UsbTesterPlugin),
 		plugins:   usbTesterPlugins,

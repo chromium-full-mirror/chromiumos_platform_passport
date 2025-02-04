@@ -46,6 +46,8 @@ func RegisterCameraPlugin(plugin CameraPlugin) {
 type UsbTesterPlugin interface {
 	// Name returns the plugin's name.
 	Name() string
+	// Some testers require additional initialization to be done at a later time.
+	Init() error
 	// Inherit service interface for plugins.
 	passport.UsbTesterServiceServer
 }
