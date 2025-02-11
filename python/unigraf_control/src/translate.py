@@ -111,7 +111,7 @@ CAPABILITY_RETURN_FIELD_MAP = {
     usb_tester_service_pb2.PIN_ASSIGMENT: "pin_mode",
     usb_tester_service_pb2.USB_CHANNEL: "usb_channel",
     usb_tester_service_pb2.POWER_ROLE: "power_role",
-    usb_tester_service_pb2.DATA_ROLE: "power_role",
+    usb_tester_service_pb2.DATA_ROLE: "data_role",
     usb_tester_service_pb2.ACTIVE_CC: "active_cc",
     usb_tester_service_pb2.CABLE_MODE: "cable_mode",
     usb_tester_service_pb2.INIT_PD_STATE: "init_pd_state",
