@@ -245,3 +245,43 @@ def sdk_get_val_to_grcp_get_val(capability, value):
         )
 
     return value
+
+
+SDK_DP_INFO_VALUE_MAP_GRCP_VALUE = {
+    ("link_rate", 0)    : usb_tester_service_pb2.RBR,
+    ("link_rate", 1)    : usb_tester_service_pb2.HBR,
+    ("link_rate", 2)    : usb_tester_service_pb2.HBR2,
+    ("link_rate", 3)    : usb_tester_service_pb2.HBR3,
+    ("color_depth",0)   : usb_tester_service_pb2.BIT6,
+    ("color_depth",1)   : usb_tester_service_pb2.BIT8,
+    ("color_depth",2)   : usb_tester_service_pb2.BIT10,
+    ("color_depth",3)   : usb_tester_service_pb2.BIT12,
+    ("color_depth",4)   : usb_tester_service_pb2.BIT16,
+    ("color_mode",0)    : usb_tester_service_pb2.RGB,
+    ("color_mode",1)    : usb_tester_service_pb2.YCBCR444,
+    ("color_mode",2)    : usb_tester_service_pb2.YCBCR422,
+    ("color_mode",4)    : usb_tester_service_pb2.YCBCR420,
+}
+
+DP_INFO_SET_MEMBERS = [
+    "color_depth",
+    "color_mode"
+    "link_rate"
+]
+
+def sdk_dp_info_value_map_grcp_value(field_name, sdk_val):
+    """This function will attempt to map a SDK value and a set field name
+    for the display port information to the gRPC set of values.
+    """
+
+    # The members that are not enum based are the same as in the SDK.
+    if field_name not in DP_INFO_SET_MEMBERS:
+        return sdk_val
+
+    k = (field_name, sdk_val)
+    if k not in SDK_DP_INFO_VALUE_MAP_GRCP_VALUE:
+        raise Exception(
+            f"unknown value or bad value ({k}) when attempting to convert"
+        )
+
+    return SDK_DP_INFO_VALUE_MAP_GRCP_VALUE[k]
