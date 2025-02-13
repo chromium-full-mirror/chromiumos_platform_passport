@@ -248,3 +248,20 @@ func (s *usbTesterServiceServer) CloseTester(
 
 	return tester.CloseTester(ctx, req)
 }
+
+// Get the display port alternate mode information.
+func (s *usbTesterServiceServer) GetDpInfo(
+	ctx context.Context,
+	req *passport.GetDpInfoRequest,
+) (*passport.GetDpInfoReply, error) {
+
+	tester := s.testerMap[req.Id]
+	if tester == nil {
+		return nil, status.Errorf(
+			codes.NotFound,
+			fmt.Sprintf("there is no USB tester with id: %s", req.Id),
+		)
+	}
+
+	return tester.GetDpInfo(ctx, req)
+}

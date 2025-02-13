@@ -146,3 +146,12 @@ func (s *usbTesterPlugin) CloseTester(
 	// This function simply forwards the request to the unigraf_control_client.
 	return s.unigraf_control_client.CloseTester(ctx, req)
 }
+
+// Get the display port alternate mode information.
+func (s *usbTesterPlugin) GetDpInfo(
+	ctx context.Context,
+	req *passport.GetDpInfoRequest,
+) (*passport.GetDpInfoReply, error) {
+	// This function simply forwards the request to the unigraf_control_client.
+	return s.unigraf_control_client.GetDpInfo(ctx, req)
+}
