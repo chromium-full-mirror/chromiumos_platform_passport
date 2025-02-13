@@ -159,6 +159,47 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
             err_code=ret, error_msg=("set failed" if ret != 0 else "")
         )
 
+    @log_functionality.logger
+    def GetDpInfo(self, request, context):
+        serial = request.id
+
+        if serial not in self._open_devices:
+            logging.error("Invalid serial %s when taking device", serial)
+            raise ValueError(f"No device with serial {serial}")
+
+        if serial not in self._serial_locks:
+            logging.error("Invalid serial %s when taking lock", serial)
+            raise ValueError(f"No device lock with serial {serial}")
+
+        ret = 0
+        dp_val = {}
+        with self._serial_locks[serial]:
+            dev = self._open_devices[serial]
+
+            ret = dev.dp.update_dp_info()
+            dp_val = dev.dp.dp_info()
+
+        if ret != 0:
+            return usb_tester_service_pb2.GetDpInfoReply(
+                err_code = ret,
+                error_msg = "Failed to update DP info in the SDK"
+            )
+
+        reply =  usb_tester_service_pb2.GetDpInfoReply(err_code=0)
+
+        for key, val in dp_val:
+            # Make spelling compatible.
+            if key == "lnk_rate":
+                key = "link_rate"
+
+            setattr(
+                reply,
+                key,
+                translate.sdk_dp_info_value_map_grcp_value(key, val),
+            )
+
+        return reply
+
 
 @log_functionality.logger
 def serve(port):
