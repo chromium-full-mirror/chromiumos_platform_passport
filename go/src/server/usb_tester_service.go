@@ -265,3 +265,37 @@ func (s *usbTesterServiceServer) GetDpInfo(
 
 	return tester.GetDpInfo(ctx, req)
 }
+
+// This method is used to get the active test port on the testing device.
+func (s *usbTesterServiceServer) GetActivePort(
+	ctx context.Context,
+	req *passport.GetActivePortRequest,
+) (*passport.GetActivePortReply, error) {
+
+	tester := s.testerMap[req.Id]
+	if tester == nil {
+		return nil, status.Errorf(
+			codes.NotFound,
+			fmt.Sprintf("there is no USB tester with id: %s", req.Id),
+		)
+	}
+
+	return tester.GetActivePort(ctx, req)
+}
+
+// This method is used to set the active test port on the testing device.
+func (s *usbTesterServiceServer) SetActivePort(
+	ctx context.Context,
+	req *passport.SetActivePortRequest,
+) (*passport.SetActivePortReply, error) {
+
+	tester := s.testerMap[req.Id]
+	if tester == nil {
+		return nil, status.Errorf(
+			codes.NotFound,
+			fmt.Sprintf("there is no USB tester with id: %s", req.Id),
+		)
+	}
+
+	return tester.SetActivePort(ctx, req)
+}

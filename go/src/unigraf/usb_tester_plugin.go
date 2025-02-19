@@ -155,3 +155,21 @@ func (s *usbTesterPlugin) GetDpInfo(
 	// This function simply forwards the request to the unigraf_control_client.
 	return s.unigraf_control_client.GetDpInfo(ctx, req)
 }
+
+// This method is used to get the active test port on the testing device.
+func (s *usbTesterPlugin) GetActivePort(
+	ctx context.Context,
+	req *passport.GetActivePortRequest,
+) (*passport.GetActivePortReply, error) {
+
+	return s.unigraf_control_client.GetActivePort(ctx, req)
+}
+
+// This method is used to set the active test port on the testing device.
+func (s *usbTesterPlugin) SetActivePort(
+	ctx context.Context,
+	req *passport.SetActivePortRequest,
+) (*passport.SetActivePortReply, error) {
+
+	return s.unigraf_control_client.SetActivePort(ctx, req)
+}
