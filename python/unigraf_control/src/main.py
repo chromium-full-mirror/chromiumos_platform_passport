@@ -181,14 +181,16 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
 
         if ret != 0:
             return usb_tester_service_pb2.GetDpInfoReply(
-                err_code = ret,
-                error_msg = "Failed to update DP info in the SDK"
+                err_code=ret, error_msg="Failed to update DP info in the SDK"
             )
 
-        reply =  usb_tester_service_pb2.GetDpInfoReply(err_code=0)
+        reply = usb_tester_service_pb2.GetDpInfoReply(err_code=0)
 
-        for key, val in dp_val:
+        logging.info(dp_val)
+
+        for key, val in dp_val.items():
             # Make spelling compatible.
+            key = key.lower()
             if key == "lnk_rate":
                 key = "link_rate"
 
