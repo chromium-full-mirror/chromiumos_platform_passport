@@ -202,6 +202,67 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
 
         return reply
 
+    @log_functionality.logger
+    def GetActivePort(self, request, context):
+        """This method is used to get the active test port on the testing device.
+        """
+        serial = request.id
+
+        if serial not in self._open_devices:
+            logging.error("Invalid serial %s when taking device", serial)
+            raise ValueError(f"No device with serial {serial}")
+
+        if serial not in self._serial_locks:
+            logging.error("Invalid serial %s when taking lock", serial)
+            raise ValueError(f"No device lock with serial {serial}")
+
+        update_stat = self._open_devices[serial].hw.update_port()
+        active_port = self._open_devices[serial].hw.port()
+
+        logging.info(update_stat, active_port)
+
+        # Build the reply. The UTC-274 has 2 test ports.
+        reply = usb_tester_service_pb2.GetActivePortReply(
+            err_code=update_stat,
+            port_id=active_port,
+            max_num_ports=2,
+        )
+
+        if update_stat != 0:
+            reply.error_msg="the SDK failed the update"
+
+        return reply
+
+    @log_functionality.logger
+    def SetActivePort(self, request, context):
+        """This method is used to set the active test port on the testing device.
+        """
+        serial = request.id
+
+        if serial not in self._open_devices:
+            logging.error("Invalid serial %s when taking device", serial)
+            raise ValueError(f"No device with serial {serial}")
+
+        if serial not in self._serial_locks:
+            logging.error("Invalid serial %s when taking lock", serial)
+            raise ValueError(f"No device lock with serial {serial}")
+
+        dev = self._open_devices[serial]
+        set_status = 0
+        active_port = dev.hw.port()
+        if active_port != request.port_id:
+            set_status = dev.hw.select_port(
+                request.port_id
+            )
+
+        dev.hw.update_port()
+
+        reply = usb_tester_service_pb2.SetActivePortReply(
+            err_code=set_status,
+            error_msg=("the sdk failed to set port" if set_status else ""),
+        )
+
+        return reply
 
 @log_functionality.logger
 def serve(port):
