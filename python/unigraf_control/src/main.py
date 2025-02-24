@@ -5,6 +5,7 @@
 import argparse
 from concurrent import futures
 import logging
+import tempfile
 import threading
 
 from chromiumos.test.lab.api.passport import usb_tester_service_pb2
@@ -260,6 +261,7 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
 
         return reply
 
+    @log_functionality.logger
     def ReplugCable(self, request, context):
         """Simulate the physical disconnect and reconnect of the cable between the
         tester and the DUT.
@@ -285,6 +287,7 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
             error_msg=("" if ret == 0 else "failed to do replug in the SDK"),
         )
 
+    @log_functionality.logger
     def HardResetTester(self, request, context):
         """This method is used to do a hard reset."""
         serial = request.id
@@ -308,6 +311,35 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
             error_msg=(
                 "" if ret == 0 else "failed to do hard reset in the SDK"
             ),
+        )
+
+    @log_functionality.logger
+    def LoadEdid(self, request, context):
+        """This method is used to load an EDID."""
+        tmp = tempfile.NamedTemporaryFile(suffix=".bin")
+
+        # Open the file for writing.
+        with open(tmp.name, "wb") as f:
+            f.write(request.edid)
+
+        logging.info("Temp file name was %s", tmp.name)
+
+        serial = request.id
+        if serial not in self._open_devices:
+            logging.error("Invalid serial %s when taking device", serial)
+            raise ValueError(f"No device with serial {serial}")
+
+        if serial not in self._serial_locks:
+            logging.error("Invalid serial %s when taking lock", serial)
+            raise ValueError(f"No device lock with serial {serial}")
+
+        ret = 0
+        with self._serial_locks[serial]:
+            dev = self._open_devices[serial]
+            ret = dev.hw.load_edid(tmp.name)
+
+        return usb_tester_service_pb2.LoadEdidReply(
+            err_code=ret, error_msg=("" if ret == 0 else "failed to load edid")
         )
 
 

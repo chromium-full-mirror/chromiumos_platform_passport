@@ -299,3 +299,20 @@ func (s *usbTesterServiceServer) SetActivePort(
 
 	return tester.SetActivePort(ctx, req)
 }
+
+// This method is used to load an EDID.
+func (s *usbTesterServiceServer) LoadEdid(
+	ctx context.Context,
+	req *passport.LoadEdidRequest,
+) (*passport.LoadEdidReply, error) {
+
+	tester := s.testerMap[req.Id]
+	if tester == nil {
+		return nil, status.Errorf(
+			codes.NotFound,
+			fmt.Sprintf("there is no USB tester with id: %s", req.Id),
+		)
+	}
+
+	return tester.LoadEdid(ctx, req)
+}

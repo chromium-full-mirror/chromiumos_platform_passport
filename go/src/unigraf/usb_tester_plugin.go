@@ -176,3 +176,12 @@ func (s *usbTesterPlugin) SetActivePort(
 
 	return s.unigraf_control_client.SetActivePort(ctx, req)
 }
+
+// This method is used to load an EDID.
+func (s *usbTesterPlugin) LoadEdid(
+	ctx context.Context,
+	req *passport.LoadEdidRequest,
+) (*passport.LoadEdidReply, error) {
+
+	return s.unigraf_control_client.LoadEdid(ctx, req)
+}
