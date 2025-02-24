@@ -264,6 +264,59 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
 
         return reply
 
+
+    def ReplugCable(self, request, context):
+        """Simulate the physical disconnect and reconnect of the cable between the
+        tester and the DUT.
+        """
+        serial = request.id
+
+        if serial not in self._open_devices:
+            logging.error("Invalid serial %s when taking device", serial)
+            raise ValueError(f"No device with serial {serial}")
+
+        if serial not in self._serial_locks:
+            logging.error("Invalid serial %s when taking lock", serial)
+            raise ValueError(f"No device lock with serial {serial}")
+
+        ret = 0
+        with self._serial_locks[serial]:
+            dev = self._open_devices[serial]
+
+            ret = dev.pd.replug()
+
+        return usb_tester_service_pb2.DoCableReplugReply(
+            err_code=ret,
+            error_msg=("" if ret == 0 else "failed to do replug in the SDK")
+        )
+
+
+    def HardResetTester(self, request, context):
+        """This method is used to do a hard reset.
+        """
+        serial = request.id
+
+        if serial not in self._open_devices:
+            logging.error("Invalid serial %s when taking device", serial)
+            raise ValueError(f"No device with serial {serial}")
+
+        if serial not in self._serial_locks:
+            logging.error("Invalid serial %s when taking lock", serial)
+            raise ValueError(f"No device lock with serial {serial}")
+
+        ret = 0
+        with self._serial_locks[serial]:
+            dev = self._open_devices[serial]
+
+            ret = dev.pd.hard_reset()
+
+        return usb_tester_service_pb2.HardResetTesterReply(
+            err_code=ret,
+            error_msg=("" if ret == 0 else "failed to do hard reset in the SDK")
+        )
+
+
+
 @log_functionality.logger
 def serve(port):
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
