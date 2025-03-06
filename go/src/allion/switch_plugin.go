@@ -34,6 +34,9 @@ var (
 		"AUS20019": {SwitchDisabled: "2", SwitchEnabled: "1"},
 		"ADT21090": {SwitchDisabled: "3", SwitchEnabled: "1"},
 		"XXRJ45SW": {SwitchDisabled: "2", SwitchEnabled: "1"},
+		"AUS22095": {SwitchDisabled: "3", SwitchEnabled: "1"},
+		"AHS24067": {SwitchDisabled: "3", SwitchEnabled: "1"},
+		"ADS24068": {SwitchDisabled: "3", SwitchEnabled: "1"},
 	}
 )
 
