@@ -204,8 +204,7 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
 
     @log_functionality.logger
     def GetActivePort(self, request, context):
-        """This method is used to get the active test port on the testing device.
-        """
+        """This method is used to get the active test port on the testing device."""
         serial = request.id
 
         if serial not in self._open_devices:
@@ -229,14 +228,13 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
         )
 
         if update_stat != 0:
-            reply.error_msg="the SDK failed the update"
+            reply.error_msg = "the SDK failed the update"
 
         return reply
 
     @log_functionality.logger
     def SetActivePort(self, request, context):
-        """This method is used to set the active test port on the testing device.
-        """
+        """This method is used to set the active test port on the testing device."""
         serial = request.id
 
         if serial not in self._open_devices:
@@ -251,9 +249,7 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
         set_status = 0
         active_port = dev.hw.port()
         if active_port != request.port_id:
-            set_status = dev.hw.select_port(
-                request.port_id
-            )
+            set_status = dev.hw.select_port(request.port_id)
 
         dev.hw.update_port()
 
@@ -263,7 +259,6 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
         )
 
         return reply
-
 
     def ReplugCable(self, request, context):
         """Simulate the physical disconnect and reconnect of the cable between the
@@ -287,13 +282,11 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
 
         return usb_tester_service_pb2.DoCableReplugReply(
             err_code=ret,
-            error_msg=("" if ret == 0 else "failed to do replug in the SDK")
+            error_msg=("" if ret == 0 else "failed to do replug in the SDK"),
         )
 
-
     def HardResetTester(self, request, context):
-        """This method is used to do a hard reset.
-        """
+        """This method is used to do a hard reset."""
         serial = request.id
 
         if serial not in self._open_devices:
@@ -312,9 +305,10 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
 
         return usb_tester_service_pb2.HardResetTesterReply(
             err_code=ret,
-            error_msg=("" if ret == 0 else "failed to do hard reset in the SDK")
+            error_msg=(
+                "" if ret == 0 else "failed to do hard reset in the SDK"
+            ),
         )
-
 
 
 @log_functionality.logger
@@ -333,17 +327,29 @@ def serve(port):
 
 
 if __name__ == "__main__":
-    log_functionality.configure_logging()
-
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--port",
         nargs="?",
-        const=1,
         type=int,
         default=8787,
         help="The port on which to start the server",
     )
+    parser.add_argument(
+        "--log-level",
+        type=str,
+        default="INFO",
+        choices=["DEBUG", "INFO", "WARN", "ERROR"],
+        help="The level to use while logging.",
+    )
+    parser.add_argument(
+        "--log-path",
+        type=str,
+        default="/tmp/cros-passport/log.txt",
+        help="The path to use when logging.",
+    )
+
     args = parser.parse_args()
+    log_functionality.configure_logging(args.log_path, args.log_level)
 
     serve(args.port)

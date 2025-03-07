@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 	"os/exec"
 
 	"google.golang.org/grpc"
@@ -48,6 +49,8 @@ func (s *usbTesterPlugin) Init() error {
 		"--port",
 		fmt.Sprintf("%d", UNIGRAF_APP_PORT),
 	)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf(
 			"failed to start unigraf control app err=%w path=%s port=%d",
