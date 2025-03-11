@@ -3,7 +3,6 @@
 # found in the LICENSE file.
 from chromiumos.test.lab.api.passport import usb_tester_service_pb2
 
-
 SDK_F_MAP = {
     usb_tester_service_pb2.PIN_ASSIGMENT: [
         "dp_pin_assigment",
