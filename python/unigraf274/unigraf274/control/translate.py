@@ -1,7 +1,19 @@
 # Copyright 2025 The ChromiumOS Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
+
+"""Convert between values.
+
+This module translated between the SDK values used by the unigraf and the
+gRPC values.
+"""
+
+# pylint: disable=import-error
 from chromiumos.test.lab.api.passport import usb_tester_service_pb2
+
+
+# pylint: enable=import-error
+
 
 SDK_F_MAP = {
     usb_tester_service_pb2.PIN_ASSIGMENT: [
@@ -214,7 +226,10 @@ def sdk_capability_to_reply_set_member(capability):
 
 
 def grcp_set_val_to_sdk_set_val(request):
-    """This function is just the opposite of `sdk_get_val_to_grcp_get_val`"""
+    """Translate between gRPC values and SDK values.
+
+    This function is just the opposite of `sdk_get_val_to_grcp_get_val`
+    """
 
     value = getattr(request, request.WhichOneof("value"))
 
@@ -230,7 +245,9 @@ def grcp_set_val_to_sdk_set_val(request):
 
 
 def sdk_get_val_to_grcp_get_val(capability, value):
-    """This function will attempt to makp a `capability` and a SDK `value`
+    """Translate between SDK values and gRPC values.
+
+    This function will attempt to makp a `capability` and a SDK `value`
     to the corresponding value in the gRPC interface. Only discrete have a
     corresponding SDK value. For non-discretes, the value is returned as is.
     """
@@ -266,7 +283,9 @@ DP_INFO_SET_MEMBERS = ["color_depth", "color_mode", "link_rate"]
 
 
 def sdk_dp_info_value_map_grcp_value(field_name, sdk_val):
-    """This function will attempt to map a SDK value and a set field name
+    """Translate between SDK values and gRPC values.
+
+    This function will attempt to map a SDK value and a set field name
     for the display port information to the gRPC set of values.
     """
 

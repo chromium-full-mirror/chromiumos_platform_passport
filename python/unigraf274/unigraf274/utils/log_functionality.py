@@ -1,28 +1,47 @@
 # Copyright 2025 The ChromiumOS Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
+
+"""This module provides utilities for logging.
+
+It includes:
+
+-   A `logger` decorator for logging function calls, arguments, results, and
+    exceptions.
+-   A `CustomFormatter` class for creating structured log messages with
+    timestamps, log levels, source file information, and formatted messages.
+-   A `configure_logging` function for setting up logging to both a file and
+    the console with the custom formatter and specified log level.
+-   A `LOG_LEVEL_MAP` dictionary for mapping log level strings to logging
+    module constants.
+
+The module is designed to simplify and standardize logging practices within
+the unigrafctl project.
+"""
+
 import datetime
-from functools import wraps
+import functools
 import logging
 import os
 
 
 def logger(func):
-    """
+    """Helper logger.
+
     A decorator function to log information about function calls and their
     results.
     """
 
-    @wraps(func)
+    @functools.wraps(func)
     def wrapper(*args, **kwargs):
-        """
+        """Helper logging function.
+
         The wrapper function that logs function calls and their results.
         """
-        logging.info(
-            f"Running {func.__name__} with args: {args}, kwargs: {kwargs}".replace(
-                "\n", " "
-            )
-        )
+
+        log_msg = f"Running {func.__name__} with args: {args}, kwargs: {kwargs}"
+        logging.info(log_msg.replace("\n", " "))
+
         try:
             result = func(*args, **kwargs)
             logging.info(
@@ -32,7 +51,7 @@ def logger(func):
             )
 
         except Exception as e:
-            logging.error(f"Error occurred in {func.__name__}: {e}")
+            logging.error("Error occurred in %s: %s", func.__name__, e)
             raise
 
         else:
@@ -82,8 +101,8 @@ def configure_logging(log_path: str, log_level: str) -> None:
         log_path: The path to the log file.
         log_level: The desired log level (DEBUG, INFO, WARN, ERROR).
     """
-    logger = logging.getLogger()
-    logger.setLevel(LOG_LEVEL_MAP[log_level])
+    custom_logger = logging.getLogger()
+    custom_logger.setLevel(LOG_LEVEL_MAP[log_level])
 
     stream_handler = logging.StreamHandler()
     stream_handler.setFormatter(CustomFormatter())
@@ -97,5 +116,5 @@ def configure_logging(log_path: str, log_level: str) -> None:
     file_handler = logging.FileHandler(log_path)
     file_handler.setFormatter(CustomFormatter())
 
-    logger.addHandler(file_handler)
-    logger.addHandler(stream_handler)
+    custom_logger.addHandler(file_handler)
+    custom_logger.addHandler(stream_handler)

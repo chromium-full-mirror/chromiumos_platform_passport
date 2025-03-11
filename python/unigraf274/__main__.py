@@ -2,14 +2,29 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+"""Launches a gRPC server for interacting with Unigraf UTC-274 USB-C testers.
+
+It utilizes the `unigraf274.control.server` module to provide the server's
+implementation and configures logging based on command-line arguments.
+
+The module defines a `serve` function that initializes and starts the gRPC
+server, listening on a specified port. The main entry point parses command-line
+arguments for port, log level, and log path, then configures logging and starts
+the server.
+"""
+
 import argparse
 from concurrent import futures
 import logging
 
+# pylint: disable=import-error
 from chromiumos.test.lab.api.passport import usb_tester_service_pb2_grpc
 import grpc
-from unigraf274.utils import log_functionality
 from unigraf274.control import server as unigrafctl
+from unigraf274.utils import log_functionality
+
+
+# pylint: enable=import-error
 
 
 @log_functionality.logger

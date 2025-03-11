@@ -2,19 +2,35 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+"""This module provides a gRPC server for interacting with Unigraf UTC-274.
+
+It encapsulates the Unigraf UTC library, providing gRPC endpoints to manage
+tester connections, retrieve and set tester capabilities, and perform various
+hardware operations such as cable replugging, hard resets, and EDID loading.
+"""
+
 import logging
 import tempfile
 import threading
 
+# pylint: disable=import-error
 from chromiumos.test.lab.api.passport import usb_tester_service_pb2
 from chromiumos.test.lab.api.passport import usb_tester_service_pb2_grpc
+from unigraf274.control import translate
+from unigraf274.utils import log_functionality
 import UTCLibrary
 
-from unigraf274.utils import log_functionality
-from unigraf274.control import translate
+
+# pylint: enable=import-error
 
 
 class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
+    """gRPC service for interacting with Unigraf UTC 274.
+
+    Provides a gRPC service for interacting with Unigraf USB-C testers,
+    managing device connections, capabilities, and operations.
+    """
+
     @log_functionality.logger
     def __init__(self):
         self._lib = UTCLibrary.UTCLib()
@@ -27,7 +43,7 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
         self.SDK_F_MAP = translate.SDK_F_MAP
 
     @log_functionality.logger
-    def GetTesters(self, request, context):
+    def GetTesters(self, _request, _context):
         """GetTesters probes all testers connected to the host device."""
         # This call will returns a list of tuples:
         # (printable_name, lock status, serial_number).
@@ -44,8 +60,11 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
         return usb_tester_service_pb2.GetTestersReply(testers=testers)
 
     @log_functionality.logger
-    def OpenTester(self, request, context):
-        """Used to open the serial of the USB tester being used."""
+    def OpenTester(self, request, _context):
+        """Mark the device as in use and initialize it.
+
+        Used to open the serial of the USB tester being used.
+        """
         serial = request.id
 
         if serial in self._serial_locks or serial in self._open_devices:
@@ -57,8 +76,11 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
         return usb_tester_service_pb2.OpenTesterReply(err_code=0, error_msg="")
 
     @log_functionality.logger
-    def CloseTester(self, request, context):
-        """Used to close the serial of the USB tester being used."""
+    def CloseTester(self, request, _context):
+        """Free the device resources.
+
+        Used to close the serial of the USB tester being used.
+        """
         serial = request.id
 
         if serial not in self._serial_locks or serial not in self._open_devices:
@@ -127,8 +149,10 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
             return ret
 
     @log_functionality.logger
-    def GetTesterCapability(self, request, context):
-        """This method is used to get the value for: dp pin assignment,
+    def GetTesterCapability(self, request, _context):
+        """This method retrieves various USB-C connection details.
+
+        This method is used to get the value for: dp pin assignment,
         active cc, power role, data role, usb channel, cable mode, init pd state
         """
 
@@ -146,8 +170,10 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
         return reply
 
     @log_functionality.logger
-    def SetTesterCapability(self, request, context):
-        """This method is used to set the value for: dp pin assignment,
+    def SetTesterCapability(self, request, _context):
+        """Manipulate unigraf's capabilities.
+
+        This method is used to set the value for: dp pin assignment,
         active cc, power role, data role, usb channel, cable mode, init pd state
         """
 
@@ -159,7 +185,7 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
         )
 
     @log_functionality.logger
-    def GetDpInfo(self, request, context):
+    def GetDpInfo(self, request, _context):
         serial = request.id
 
         if serial not in self._open_devices:
@@ -202,8 +228,11 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
         return reply
 
     @log_functionality.logger
-    def GetActivePort(self, request, context):
-        """This method is used to get the active test port on the testing device."""
+    def GetActivePort(self, request, _context):
+        """Get details about the testing port.
+
+        This method is used to get the active test port on the testing device.
+        """
         serial = request.id
 
         if serial not in self._open_devices:
@@ -232,8 +261,11 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
         return reply
 
     @log_functionality.logger
-    def SetActivePort(self, request, context):
-        """This method is used to set the active test port on the testing device."""
+    def SetActivePort(self, request, _context):
+        """Manipulate the testing port.
+
+        This method is used to set the active test port on the testing device.
+        """
         serial = request.id
 
         if serial not in self._open_devices:
@@ -260,9 +292,11 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
         return reply
 
     @log_functionality.logger
-    def ReplugCable(self, request, context):
-        """Simulate the physical disconnect and reconnect of the cable between the
-        tester and the DUT.
+    def ReplugCable(self, request, _context):
+        """Simulate cable replug.
+
+        Simulate the physical disconnect and reconnect of the cable between
+        thetester and the DUT.
         """
         serial = request.id
 
@@ -286,7 +320,7 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
         )
 
     @log_functionality.logger
-    def HardResetTester(self, request, context):
+    def HardResetTester(self, request, _context):
         """This method is used to do a hard reset."""
         serial = request.id
 
@@ -312,8 +346,10 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
         )
 
     @log_functionality.logger
-    def LoadEdid(self, request, context):
+    def LoadEdid(self, request, _context):
         """This method is used to load an EDID."""
+
+        # pylint: disable=R1732
         tmp = tempfile.NamedTemporaryFile(suffix=".bin")
 
         # Open the file for writing.
@@ -339,5 +375,3 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
         return usb_tester_service_pb2.LoadEdidReply(
             err_code=ret, error_msg=("" if ret == 0 else "failed to load edid")
         )
-
-
