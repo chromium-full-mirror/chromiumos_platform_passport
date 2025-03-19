@@ -14,6 +14,7 @@ import (
 	"go.chromium.org/chromiumos/config/go/test/lab/api/passport"
 	"go.chromium.org/chromiumos/test/util/portdiscovery"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/reflection"
 )
 
 // InitializeGRPCServer sets up the passport service and registers services with it.
@@ -21,6 +22,9 @@ func InitializeGRPCServer(ctx context.Context) (*grpc.Server, error) {
 	// Configure server.
 	var serverOpts []grpc.ServerOption
 	server := grpc.NewServer(serverOpts...)
+
+	// Register reflection service to help query/debug services.
+	reflection.Register(server)
 
 	switchServcice, err := newSwitchServiceServer(ctx)
 	if err != nil {
