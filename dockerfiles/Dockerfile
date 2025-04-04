@@ -33,21 +33,24 @@ WORKDIR "/usr/local/bin/unigraf"
 COPY --from=apiconfig python/ chromiumos_apis
 COPY --from=passport python/ .
 
-ARG UNIGRAF_SDK_VERSION=1.1.3.652
+ARG UTC274_SDK_VERSION=1.1.3.652
+ARG UCD500_SDK_VERSION=3.5.284.12136
 
 # Install the unigraf control dependencies and the chromiumos APIs.
-RUN wget https://storage.googleapis.com/chromeos-localmirror/distfiles/UTCLibrary-${UNIGRAF_SDK_VERSION}.tar.gz \
+RUN wget https://storage.googleapis.com/chromeos-localmirror/distfiles/UTCLibrary-${UTC274_SDK_VERSION}.tar.gz \
+    && wget https://storage.googleapis.com/chromeos-localmirror/distfiles/UniTAP-${UCD500_SDK_VERSION}.tar.gz \
     && venv/bin/pip install --require-hashes -r unigraf/requirements.txt \
     && venv/bin/pip install --no-deps --no-index chromiumos_apis/ \
     && venv/bin/pyinstaller \
       --collect-all UTCLibrary \
+      --collect-all UniTAP \
       --name unigrafctl \
       --onefile unigraf/__main__.py
 
 # Final assembly.
 FROM --platform=$BUILDPLATFORM debian:bookworm-slim
 
-RUN apt-get update && apt-get install -y usbutils
+RUN apt-get update && apt-get install -y usbutils libpcap-dev
 
 COPY --from=unigrafctl_build /usr/local/bin/unigraf/dist/unigrafctl /bin/unigrafctl
 COPY --from=build /bin/cros-passport /bin/cros-passport
