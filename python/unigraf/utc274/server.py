@@ -16,9 +16,10 @@ import threading
 # pylint: disable=import-error
 from chromiumos.test.lab.api.passport import usb_tester_service_pb2
 from chromiumos.test.lab.api.passport import usb_tester_service_pb2_grpc
-from unigraf274.control import translate
-from unigraf274.utils import log_functionality
+from utc274 import translate
 import UTCLibrary
+
+from utils import log_functionality
 
 
 # pylint: enable=import-error

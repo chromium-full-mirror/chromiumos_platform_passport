@@ -37,12 +37,12 @@ ARG UNIGRAF_SDK_VERSION=1.1.3.652
 
 # Install the unigraf control dependencies and the chromiumos APIs.
 RUN wget https://storage.googleapis.com/chromeos-localmirror/distfiles/UTCLibrary-${UNIGRAF_SDK_VERSION}.tar.gz \
-    && venv/bin/pip install --require-hashes -r unigraf274/requirements.txt \
+    && venv/bin/pip install --require-hashes -r unigraf/requirements.txt \
     && venv/bin/pip install --no-deps --no-index chromiumos_apis/ \
     && venv/bin/pyinstaller \
       --collect-all UTCLibrary \
       --name unigrafctl \
-      --onefile unigraf274/__main__.py
+      --onefile unigraf/__main__.py
 
 # Final assembly.
 FROM --platform=$BUILDPLATFORM debian:bookworm-slim
