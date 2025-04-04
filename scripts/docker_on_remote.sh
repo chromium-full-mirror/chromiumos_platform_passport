@@ -29,7 +29,6 @@ set -e
 SCRIPT_DIR="$(dirname "$(realpath -e "${BASH_SOURCE[0]}")")"
 PROJECT_DIR="$(realpath -e "${SCRIPT_DIR}/..")"
 SSH_CMD="ssh -q -o StrictHostKeyChecking=no"
-DOCKER_DRONE_CMD=""
 SATLAB_KEY_FILE="/home/satlab/keys/pubsub-key-do-not-delete.json"
 PASSSPORT_DOCKER_IMAGE="us-docker.pkg.dev/cros-passport/passport/passport:latest"
 LOG_DIVIDER="=================================================================="
@@ -40,10 +39,6 @@ while [[ $# -gt 0 ]]; do
   case $1 in
     --build_from_local)
       BUILD_FROM_LOCAL=true
-      shift
-      ;;
-    --run_in_drone)
-      RUN_IN_DRONE=true
       shift
       ;;
     *)
@@ -71,7 +66,7 @@ function set_docker_cmd_path() {
 
 function stop_passport_service() {
   echo "Stopping existing containers"
-  if ! ${SSH_CMD} "${HOST}" "${DOCKER_CMD}" ${DOCKER_DRONE_CMD} rm -f passport-dev;
+  if ! ${SSH_CMD} "${HOST}" "${DOCKER_CMD}" rm -f passport-dev;
   then
     echo "WARN: failed to stop existing passport container"
   fi
@@ -79,31 +74,22 @@ function stop_passport_service() {
 
 function start_passport_service() {
   echo "Starting passport service"
-  if [[ -n "${DOCKER_DRONE_CMD}" ]]; then
-    EXEC_TYPE_SPECIFIC_ARGS="--network=adb-network --volume=/dev:/dev"
-  else
-    EXEC_TYPE_SPECIFIC_ARGS="-p 8300:8300 --privileged"
-  fi
-  ${SSH_CMD} "${HOST}" "${DOCKER_CMD}" ${DOCKER_DRONE_CMD} run \
+  ${SSH_CMD} "${HOST}" "${DOCKER_CMD}" run \
       -d \
       --cap-add=NET_RAW \
       --rm \
-      ${EXEC_TYPE_SPECIFIC_ARGS} \
+      -p 8300:8300 --privileged \
       --name "passport-dev" \
       "${PASSSPORT_DOCKER_IMAGE}${ARCH}"
 
   # Get the IP address of the container and echo forwarding command for testing.
   IP=$(${SSH_CMD} "${HOST}" \
-      "${DOCKER_CMD}" ${DOCKER_DRONE_CMD} inspect \
+      "${DOCKER_CMD}" inspect \
       -f '{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}' \
       passport-dev)
   echo -e "\n${LOG_DIVIDER}"
   echo "Successfully updated passport on host ${HOST}"
-  if [[ -n "${DOCKER_DRONE_CMD}" ]]; then
-    echo "Passport service running in drone container ${IP}:8300"
-  else
-    echo "SSH COMMAND: ssh -L 8300:${IP}:8300 ${HOST}"
-  fi
+  echo "SSH COMMAND: ssh -L 8300:${IP}:8300 ${HOST}"
   echo -e "${LOG_DIVIDER}"
 }
 
@@ -157,23 +143,15 @@ for HOST in "${HOSTS[@]}"; do
 
   set_docker_cmd_path
 
-  if [[ -n "${RUN_IN_DRONE}" ]]; then
-    DOCKER_DRONE_CMD="exec drone docker"
-    echo "Running docker in drone container"
-  fi
-
   stop_passport_service
 
   echo "Copying image to host"
   scp -o StrictHostKeyChecking=no \
       "${PROJECT_DIR}/passport${ARCH}.tar" \
       "${HOST}:/tmp/passport.tar"
-  if [[ -n "${DOCKER_DRONE_CMD}" ]]; then
-      ${SSH_CMD} "${HOST}" "${DOCKER_CMD}" cp /tmp/passport.tar drone:/tmp/passport.tar
-  fi
 
   echo "Starting container"
-  ${SSH_CMD} "${HOST}" "${DOCKER_CMD}" ${DOCKER_DRONE_CMD} load -i /tmp/passport.tar
+  ${SSH_CMD} "${HOST}" "${DOCKER_CMD}" load -i /tmp/passport.tar
 
   start_passport_service
 done
