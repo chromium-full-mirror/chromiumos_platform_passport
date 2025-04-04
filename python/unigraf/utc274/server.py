@@ -43,6 +43,8 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
 
         self.SDK_F_MAP = translate.SDK_F_MAP
 
+        logging.info("UsbTesterServiceServicer init done")
+
     @log_functionality.logger
     def GetTesters(self, _request, _context):
         """GetTesters probes all testers connected to the host device."""

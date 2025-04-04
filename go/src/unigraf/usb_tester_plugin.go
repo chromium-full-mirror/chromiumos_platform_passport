@@ -48,6 +48,8 @@ func (s *usbTesterPlugin) Init() error {
 		UNIGRAF_APP_PATH,
 		"--port",
 		fmt.Sprintf("%d", UNIGRAF_APP_PORT),
+		"--device",
+		"UTC274",
 	)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

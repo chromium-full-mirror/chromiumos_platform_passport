@@ -19,8 +19,10 @@ import logging
 
 # pylint: disable=import-error
 from chromiumos.test.lab.api.passport import usb_tester_service_pb2_grpc
+from chromiumos.test.lab.api.passport import video_tester_service_pb2_grpc
 import grpc
-from utc274 import server as unigrafctl
+from ucd500 import server as ucd500ctl
+from utc274 import server as utc274ctl
 
 from utils import log_functionality
 
@@ -29,12 +31,18 @@ from utils import log_functionality
 
 
 @log_functionality.logger
-def serve(port):
+def serve(port, device_type):
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
 
-    usb_tester_service_pb2_grpc.add_UsbTesterServiceServicer_to_server(
-        unigrafctl.UnigrafServer(), server
-    )
+    if device_type in ["ALL", "UTC274"]:
+        usb_tester_service_pb2_grpc.add_UsbTesterServiceServicer_to_server(
+            utc274ctl.UnigrafServer(), server
+        )
+
+    if device_type in ["ALL", "UCD500"]:
+        video_tester_service_pb2_grpc.add_VideoTesterServiceServicer_to_server(
+            ucd500ctl.UnigrafServer(), server
+        )
 
     server.add_insecure_port(f"[::]:{port}")
     server.start()
@@ -60,6 +68,13 @@ if __name__ == "__main__":
         help="The level to use while logging.",
     )
     parser.add_argument(
+        "--device",
+        type=str,
+        required=True,
+        choices=["ALL", "UTC274", "UCD500"],
+        help="The device model to be controlled",
+    )
+    parser.add_argument(
         "--log-path",
         type=str,
         default="/tmp/cros-passport/log.txt",
@@ -69,4 +84,4 @@ if __name__ == "__main__":
     args = parser.parse_args()
     log_functionality.configure_logging(args.log_path, args.log_level)
 
-    serve(args.port)
+    serve(args.port, args.device)
