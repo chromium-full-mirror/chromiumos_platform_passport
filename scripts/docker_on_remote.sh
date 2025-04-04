@@ -14,34 +14,47 @@
 #
 # Usage:
 #
-# ./docker_on_remote.sh <host_1> [...<host_2>]
+# ./docker_on_remote.sh [--build_from_local] <host_1> [...<host_2>]
+#
+# Example start using prebuilt docker image from docker registry:
+#
+# ./docker_on_remote.sh 100.71.235.12
+#
+# Example Build from local source including any changes in the current workspace:
+#
+# ./docker_on_remote.sh --build_from_local 100.71.235.12
+#
 set -e
 
 SCRIPT_DIR="$(dirname "$(realpath -e "${BASH_SOURCE[0]}")")"
 PROJECT_DIR="$(realpath -e "${SCRIPT_DIR}/..")"
 SSH_CMD="ssh -q -o StrictHostKeyChecking=no"
 DOCKER_DRONE_CMD=""
+SATLAB_KEY_FILE="/home/satlab/keys/pubsub-key-do-not-delete.json"
+PASSSPORT_DOCKER_IMAGE="us-docker.pkg.dev/cros-passport/passport/passport:latest"
 LOG_DIVIDER="=================================================================="
+HOSTS=()
 
-echo "Building docker image"
-"${SCRIPT_DIR}/build_docker.sh"
-
-for HOST in "$@"; do
-  echo -e "\n${LOG_DIVIDER}"
-  echo "Updating passport on host '${HOST}'"
-
-  # Chech which architecture to use, not comprehensive since we only support
-  # arm64 and amd64.
-  case $(${SSH_CMD} "${HOST}" uname -m) in
-    aarch64)
-      ARCH="arm64" ;;
-    x86_64)
-      ARCH="amd64" ;;
+# parse the cli arguments
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --build_from_local)
+      BUILD_FROM_LOCAL=true
+      shift
+      ;;
+    --run_in_drone)
+      RUN_IN_DRONE=true
+      shift
+      ;;
     *)
-      echo "Unknown architecture for: $(${SSH_CMD} "${HOST}" uname -m)"
-      exit 1
+      # append to the hosts list
+      HOSTS+=("$1")
+      shift
+      ;;
   esac
+done
 
+function set_docker_cmd_path() {
   echo "Searching for docker command"
   DOCKER_CMD=$(${SSH_CMD} "${HOST}" which docker) || true
   if [[ -z "${DOCKER_CMD//}" ]]; then
@@ -54,29 +67,18 @@ for HOST in "$@"; do
     echo "ERROR: failed to find docker executable for host"
     exit 1
   fi
+}
 
-  if [[ -n "${RUN_IN_DRONE}" ]]; then
-    DOCKER_DRONE_CMD="exec drone docker"
-    echo "Running docker in drone container"
-  fi
-
+function stop_passport_service() {
   echo "Stopping existing containers"
   if ! ${SSH_CMD} "${HOST}" "${DOCKER_CMD}" ${DOCKER_DRONE_CMD} rm -f passport-dev;
   then
     echo "WARN: failed to stop existing passport container"
   fi
+}
 
-  echo "Copying image to host"
-  scp -o StrictHostKeyChecking=no \
-      "${PROJECT_DIR}/passport-${ARCH}.tar" \
-      "${HOST}:/tmp/passport.tar"
-  if [[ -n "${DOCKER_DRONE_CMD}" ]]; then
-      ${SSH_CMD} "${HOST}" "${DOCKER_CMD}" cp /tmp/passport.tar drone:/tmp/passport.tar
-  fi
-
-  echo "Starting container"
-  ${SSH_CMD} "${HOST}" "${DOCKER_CMD}" ${DOCKER_DRONE_CMD} load -i /tmp/passport.tar
-
+function start_passport_service() {
+  echo "Starting passport service"
   if [[ -n "${DOCKER_DRONE_CMD}" ]]; then
     EXEC_TYPE_SPECIFIC_ARGS="--network=adb-network --volume=/dev:/dev"
   else
@@ -88,7 +90,7 @@ for HOST in "$@"; do
       --rm \
       ${EXEC_TYPE_SPECIFIC_ARGS} \
       --name "passport-dev" \
-      "us-docker.pkg.dev/cros-passport/passport/passport:latest-${ARCH}"
+      "${PASSSPORT_DOCKER_IMAGE}${ARCH}"
 
   # Get the IP address of the container and echo forwarding command for testing.
   IP=$(${SSH_CMD} "${HOST}" \
@@ -103,4 +105,75 @@ for HOST in "$@"; do
     echo "SSH COMMAND: ssh -L 8300:${IP}:8300 ${HOST}"
   fi
   echo -e "${LOG_DIVIDER}"
+}
+
+if [[ -z "${HOSTS[*]}" ]]; then
+  echo "No hosts specified, exiting"
+  exit 1
+fi
+
+if [[ -z "${BUILD_FROM_LOCAL}" ]]; then
+  echo "Defaulting to passport prebuilt from docker registry"
+  echo "To build from local source, run with --build_from_local"
+  # only run if one host is specified
+  if [[ "${#HOSTS[@]}" -gt 1 ]]; then
+    echo "ERROR: using prebuilt docker image is not supported with multiple hosts"
+    exit 1
+  fi
+  HOST="${HOSTS[0]}"
+  set_docker_cmd_path
+  if ! ${SSH_CMD} "${HOST}" "${DOCKER_CMD} exec -i compose sh -c 'cat "${SATLAB_KEY_FILE}" | /usr/local/bin/docker login -u _json_key --password-stdin us-docker.pkg.dev/cros-passport'"; then
+    echo "ERROR: failed to login to docker registry, are you running this script on a satlab?"
+    exit 1
+  fi
+  if ! ${SSH_CMD} "${HOST}" "${DOCKER_CMD} exec -i compose sh -c '/usr/local/bin/docker pull ${PASSSPORT_DOCKER_IMAGE}'"; then
+    echo "ERROR: failed to pull latest passport docker image"
+    # exit 1
+  fi
+  stop_passport_service
+  start_passport_service
+  exit 0
+fi
+
+# else build from local source then push to remote host(s)
+echo "Building docker image"
+"${SCRIPT_DIR}/build_docker.sh"
+
+for HOST in "${HOSTS[@]}"; do
+  echo -e "\n${LOG_DIVIDER}"
+  echo "Updating passport on host '${HOST}'"
+
+  # Check which architecture to use, not comprehensive since we only support
+  # arm64 and amd64.
+  case $(${SSH_CMD} "${HOST}" uname -m) in
+    aarch64)
+      ARCH="-arm64" ;;
+    x86_64)
+      ARCH="-amd64" ;;
+    *)
+      echo "Unknown architecture for: $(${SSH_CMD} "${HOST}" uname -m)"
+      exit 1
+  esac
+
+  set_docker_cmd_path
+
+  if [[ -n "${RUN_IN_DRONE}" ]]; then
+    DOCKER_DRONE_CMD="exec drone docker"
+    echo "Running docker in drone container"
+  fi
+
+  stop_passport_service
+
+  echo "Copying image to host"
+  scp -o StrictHostKeyChecking=no \
+      "${PROJECT_DIR}/passport${ARCH}.tar" \
+      "${HOST}:/tmp/passport.tar"
+  if [[ -n "${DOCKER_DRONE_CMD}" ]]; then
+      ${SSH_CMD} "${HOST}" "${DOCKER_CMD}" cp /tmp/passport.tar drone:/tmp/passport.tar
+  fi
+
+  echo "Starting container"
+  ${SSH_CMD} "${HOST}" "${DOCKER_CMD}" ${DOCKER_DRONE_CMD} load -i /tmp/passport.tar
+
+  start_passport_service
 done
