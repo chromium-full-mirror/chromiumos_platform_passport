@@ -8,5 +8,5 @@ import (
 	// Imported packages that register plugins.
 	_ "go.chromiumos.org/chromiumos/platform/passport/allion"
 	_ "go.chromiumos.org/chromiumos/platform/passport/generic"
-	_ "go.chromiumos.org/chromiumos/platform/passport/unigraf"
+	_ "go.chromiumos.org/chromiumos/platform/passport/unigraf/utc274"
 )

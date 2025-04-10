@@ -3,7 +3,7 @@
 // found in the LICENSE file.
 
 // Package unigraf provides support for interacting with unigraf usb testers.
-package unigraf
+package utc274
 
 import (
 	"context"
