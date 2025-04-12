@@ -26,29 +26,47 @@ const (
 )
 
 var (
-	// switchModels maps switch model IDs to a set of switch states and their corresponding "commands"
-	// since each switch model has a specific command needed to apply a state change.
-	switchModels = map[string]commandMap{
-		"AUS19129": {SwitchDisabled: "0", SwitchEnabled: "1", SwitchFlip: "2"},
-		"AHS20079": {SwitchDisabled: "2", SwitchEnabled: "1"},
-		"AUS20019": {SwitchDisabled: "2", SwitchEnabled: "1"},
-		"ADT21090": {SwitchDisabled: "3", SwitchEnabled: "1"},
-		"XXRJ45SW": {SwitchDisabled: "2", SwitchEnabled: "1"},
-		"AUS22095": {SwitchDisabled: "3", SwitchEnabled: "1"},
-		"AHS24067": {SwitchDisabled: "3", SwitchEnabled: "1"},
-		"ADS24068": {SwitchDisabled: "3", SwitchEnabled: "1"},
+	// each switch model has a specific command needed to apply a state change
+	defaultPort = "default"
+
+	// switchCommands maps switch model ID to a command map for disabling and flipping that specific switch
+	switchCommands = map[string]commandMap{
+		"AUS19129": {SwitchDisabled: "0", SwitchFlip: "2"},
+		"AHS20079": {SwitchDisabled: "2"},
+		"AUS20019": {SwitchDisabled: "2"},
+		"ADT21090": {SwitchDisabled: "3"},
+		"XXRJ45SW": {SwitchDisabled: "2"},
+		"AUS22095": {SwitchDisabled: "3"},
+		"AHS24067": {SwitchDisabled: "3"},
+		"ADS24068": {SwitchDisabled: "3"},
+	}
+
+	// switchEnabledByPortIdCommands maps switch model ID to a command map for enabling that specific switch by port ID
+	switchEnabledByPortIdCommands = map[string]portCommandMap{
+		"AUS19129": {defaultPort: "1"},
+		"AHS20079": {defaultPort: "1"},
+		"AUS20019": {defaultPort: "1"},
+		"ADT21090": {defaultPort: "1"},
+		"XXRJ45SW": {defaultPort: "1"},
+		"AUS22095": {defaultPort: "1", "A": "1", "B": "2"},
+		"AHS24067": {defaultPort: "1"},
+		"ADS24068": {defaultPort: "1"},
 	}
 )
 
 // Maps switch states to commands to be sent to the device.
 type commandMap map[passport.SwitchPortState]string
 
+// Maps switch port to commands to be sent to the device.
+type portCommandMap map[string]string
+
 // switchInfo contains cached information about an Allion switch.
 type switchInfo struct {
-	uid      string
-	port     string
-	model    string
-	commands commandMap
+	uid                  string
+	port                 string
+	model                string
+	commands             commandMap
+	enableByPortCommands portCommandMap
 }
 
 // switchPlugin is an allion switch plugin.
@@ -73,7 +91,7 @@ func (s *switchPlugin) GetSwitches(ctx context.Context, req *passport.GetSwitche
 	}
 
 	var switches []*passport.SwitchFixture
-	for id, _ := range s.switches {
+	for id := range s.switches {
 		switches = append(switches, &passport.SwitchFixture{Id: id})
 	}
 
@@ -84,8 +102,13 @@ func (s *switchPlugin) GetSwitches(ctx context.Context, req *passport.GetSwitche
 
 // ConfigureSwitchPort configures a single port on a switch.
 func (s *switchPlugin) ConfigureSwitchPort(ctx context.Context, req *passport.ConfigureSwitchPortRequest) (*passport.ConfigureSwitchPortResponse, error) {
-	slog.Info("Configuring switch", "switch", req.GetSwitchId(), "state", req.GetState())
-	if err := s.controlSwitch(ctx, req.GetSwitchId(), req.GetState()); err != nil {
+	slog.Info("Configuring switch", "switch", req.GetSwitchId(), "state", req.GetState(), "port id", req.GetPortId())
+
+	portId := req.GetPortId()
+	if len(portId) == 0 {
+		portId = defaultPort
+	}
+	if err := s.controlSwitch(ctx, req.GetSwitchId(), req.GetState(), portId); err != nil {
 		return nil, err
 	}
 
@@ -101,7 +124,7 @@ func (s *switchPlugin) ResetAllSwitches(ctx context.Context, req *passport.Reset
 
 	for _, sw := range resp.GetSwitches() {
 		slog.Info("Resetting switch", "switch", sw.GetId())
-		if err := s.controlSwitch(ctx, sw.GetId(), SwitchDisabled); err != nil {
+		if err := s.controlSwitch(ctx, sw.GetId(), SwitchDisabled, defaultPort); err != nil {
 			return nil, fmt.Errorf("failed to disable switch: %q: %w", sw.GetId(), err)
 		}
 	}
@@ -166,19 +189,26 @@ func (s *switchPlugin) refreshSwitches(ctx context.Context) error {
 }
 
 // controlSwitch sets the switch status to on or off.
-func (s *switchPlugin) controlSwitch(ctx context.Context, id string, state passport.SwitchPortState) error {
+func (s *switchPlugin) controlSwitch(ctx context.Context, id string, state passport.SwitchPortState, portId string) error {
 	id = strings.ToUpper(id)
 	sw, ok := s.switches[id]
 	if !ok {
 		return fmt.Errorf("unable to find the serial port of the switch ID: %s", id)
 	}
 
-	cmd, ok := sw.commands[state]
-	if !ok {
-		return fmt.Errorf("unable to find the corresponding command of the switch ID: %q, status: %s", id, state)
+	cmd := ""
+	if state == SwitchEnabled {
+		if cmd, ok = sw.enableByPortCommands[portId]; !ok {
+			return fmt.Errorf("unable to find the corresponding port command of the switch ID: %q, port ID: %s", id, portId)
+		}
+
+	} else {
+		if cmd, ok = sw.commands[state]; !ok {
+			return fmt.Errorf("unable to find the corresponding command of the switch ID: %q, status: %s", id, state)
+		}
 	}
 
-	slog.Info("Setting switch state", "id", id, "state", state, "port", sw.port, "cmd", cmd)
+	slog.Info("Setting switch state", "switch id", id, "state", state, "port id", portId, "switch port", sw.port, "cmd", cmd)
 	if _, err := sendDataToSerialPort(ctx, sw.port, cmd, 3*time.Second); err != nil {
 		return fmt.Errorf("failed to request serial port: %w", err)
 	}
@@ -242,15 +272,20 @@ func isAllionDevice(device string) (bool, *switchInfo) {
 
 	// Model number is the first 8 characters of the serial.
 	model := serial[0:8]
-	if _, ok := switchModels[model]; !ok {
+	if _, ok := switchCommands[model]; !ok {
+		return false, nil
+	}
+
+	if _, ok := switchEnabledByPortIdCommands[model]; !ok {
 		return false, nil
 	}
 
 	// Extract the uid from serial, this is the expected id used by
 	// the test.
 	return true, &switchInfo{
-		uid:      device[3:8] + device[13:15],
-		model:    model,
-		commands: switchModels[model],
+		uid:                  device[3:8] + device[13:15],
+		model:                model,
+		commands:             switchCommands[model],
+		enableByPortCommands: switchEnabledByPortIdCommands[model],
 	}
 }
