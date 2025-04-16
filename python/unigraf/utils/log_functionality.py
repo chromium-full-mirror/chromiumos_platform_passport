@@ -89,7 +89,7 @@ class CustomFormatter(logging.Formatter):
         return (
             f"time={timestamp} "
             f"level={level} "
-            f"source={source} "
+            f"source=[{record.process}]{source} "
             f'msg="{message}"'
         )
 
