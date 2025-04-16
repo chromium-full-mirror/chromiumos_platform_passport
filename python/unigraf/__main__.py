@@ -22,6 +22,7 @@ from chromiumos.test.lab.api.passport import usb_tester_service_pb2_grpc
 from chromiumos.test.lab.api.passport import video_tester_service_pb2_grpc
 import grpc
 from ucd500 import server as ucd500ctl
+from utc274 import fwupdate as utc274fwup
 from utc274 import server as utc274ctl
 
 from utils import log_functionality
@@ -49,6 +50,19 @@ def serve(port, device_type):
 
     logging.info("Server started, listening on %d", port)
     server.wait_for_termination()
+
+
+@log_functionality.logger
+def fwupdate(device_type, fw_update, force_update, device_serial):
+    logging.info("Check for FW updates")
+    if device_type in ["ALL", "UTC274"] and fw_update:
+        logging.info("The UTC-274s will be updated.")
+
+        fwup = utc274fwup.Utc274FwUpdater(force_update)
+        if device_serial != "":
+            fwup.update_device(device_serial)
+        else:
+            fwup.update_all_devices()
 
 
 if __name__ == "__main__":
@@ -80,8 +94,30 @@ if __name__ == "__main__":
         default="/tmp/cros-passport/log.txt",
         help="The path to use when logging.",
     )
+    parser.add_argument(
+        "--fwupdate",
+        default=False,
+        action="store_true",
+        help="Do a FW update on the specified class of devices"
+        "before starting the server. ALL devices from the class"
+        "will be updated. The class is specified with the --device argument.",
+    )
+    parser.add_argument(
+        "--force-update",
+        default=False,
+        action="store_true",
+        help="Enable FW downgrades.",
+    )
+    parser.add_argument(
+        "--device-serial",
+        type=str,
+        default="",
+        help="The serial of the device to perform targeted fw update.",
+    )
 
     args = parser.parse_args()
     log_functionality.configure_logging(args.log_path, args.log_level)
+
+    fwupdate(args.device, args.fwupdate, args.force_update, args.device_serial)
 
     serve(args.port, args.device)
