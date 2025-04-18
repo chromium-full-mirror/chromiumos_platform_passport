@@ -52,7 +52,10 @@ RUN wget https://storage.googleapis.com/chromeos-localmirror/distfiles/UTCLibrar
 # Final assembly.
 FROM --platform=$BUILDPLATFORM debian:bookworm-slim
 
-RUN apt-get update && apt-get install -y usbutils libpcap-dev
+RUN apt-get update \
+  && apt-get install -y usbutils libpcap-dev ca-certificates \
+  && update-ca-certificates \
+  && mkdir -p /opt/unigraf/
 
 COPY --from=unigrafctl_build /usr/local/bin/unigraf/dist/unigrafctl /bin/unigrafctl
 COPY --from=build /bin/cros-passport /bin/cros-passport

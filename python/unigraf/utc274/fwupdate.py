@@ -10,11 +10,16 @@ or a specific device by its serial number, with options to force the
 update regardless of the current firmware versions.
 """
 
+import hashlib
 import logging
+import os
+import urllib
 
 # pylint: disable=import-error
 import UTCLibrary
+import wget
 
+from utils import constants
 from utils import log_functionality
 
 
@@ -47,6 +52,40 @@ class Utc274FwUpdater:
             self._fw_blob_path,
             self.force_fw,
         )
+
+        url = urllib.parse.urljoin(
+            constants.UTC_274_FIRMWARE_BASE_LINK,
+            constants.UTC_274_PD_FIRMWARE_VERSION,
+        )
+        path = self._fw_blob_path + constants.UTC_274_PD_FIRMWARE_VERSION
+        self._download_firmware(url, path)
+        self._check_file_hash(path, constants.UTC_274_PD_FIRMWARE_CHECKSUM)
+
+        url = urllib.parse.urljoin(
+            constants.UTC_274_FIRMWARE_BASE_LINK,
+            constants.UTC_274_MS_FIRMWARE_VERSION,
+        )
+        path = self._fw_blob_path + constants.UTC_274_MS_FIRMWARE_VERSION
+        self._download_firmware(url, path)
+        self._check_file_hash(path, constants.UTC_274_MS_FIRMWARE_CHECKSUM)
+
+    def _download_firmware(self, url, path):
+        if os.path.exists(path):
+            logging.info("Removed existing file %s.", path)
+            os.remove(path)
+
+        logging.info("Download firmware from url: %s", url)
+        wget.download(url, path)
+        logging.info("Firmware download finished")
+
+    def _check_file_hash(self, path, expected):
+        with open(path, "rb", buffering=0) as f:
+            actual = hashlib.file_digest(f, "sha256").hexdigest()
+            if actual != expected:
+                raise Exception(
+                    f"Hash for file {path} is {actual}, expected {expected}"
+                )
+            logging.info("Hashes for file %s match.", path)
 
     @log_functionality.logger
     def update_all_devices(self):
