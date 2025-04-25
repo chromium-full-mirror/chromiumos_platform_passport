@@ -233,3 +233,123 @@ func (s *videoTesterServiceServer) LoadEdidVideoTester(
 	// Call the LoadEdidVideoTester method of the found plugin.
 	return tester.LoadEdidVideoTester(ctx, req)
 }
+
+// GetStreamInfoVideoTester handles the GetStreamInfoVideoTester gRPC request.
+// It calls the GetStreamInfoVideoTester method of the corresponding plugin.
+func (s *videoTesterServiceServer) GetStreamInfoVideoTester(
+	ctx context.Context,
+	req *passport.GetStreamInfoVideoTesterRequest,
+) (*passport.GetStreamInfoVideoTesterResponse, error) {
+	// Look up the plugin associated with the requested tester ID.
+	tester := s.testerMap[req.Id]
+	// If no plugin is found for the given ID, return a NotFound error.
+	if tester == nil {
+		return nil, status.Errorf(
+			codes.NotFound,
+			fmt.Sprintf("there is no tester with id: %s", req.Id),
+		)
+	}
+
+	// Call the GetStreamInfoVideoTester method of the found plugin.
+	return tester.GetStreamInfoVideoTester(ctx, req)
+}
+
+// ScreenshotVideoTester handles the ScreenshotVideoTester gRPC request.
+// It calls the ScreenshotVideoTester method of the corresponding plugin.
+func (s *videoTesterServiceServer) ScreenshotVideoTester(
+	ctx context.Context,
+	req *passport.ScreenshotVideoTesterRequest,
+) (*passport.ScreenshotVideoTesterResponse, error) {
+	// Look up the plugin associated with the requested tester ID.
+	tester := s.testerMap[req.Id]
+	// If no plugin is found for the given ID, return a NotFound error.
+	if tester == nil {
+		return nil, status.Errorf(
+			codes.NotFound,
+			fmt.Sprintf("there is no tester with id: %s", req.Id),
+		)
+	}
+
+	// Call the ScreenshotVideoTester method of the found plugin.
+	return tester.ScreenshotVideoTester(ctx, req)
+}
+
+// SetLinkVideoTester handles the SetLinkVideoTester gRPC request.
+// It calls the SetLinkVideoTester method of the corresponding plugin.
+func (s *videoTesterServiceServer) SetLinkVideoTester(
+	ctx context.Context,
+	req *passport.SetLinkVideoTesterRequest,
+) (*passport.SetLinkVideoTesterResponse, error) {
+	// Look up the plugin associated with the requested tester ID.
+	tester := s.testerMap[req.Id]
+	// If no plugin is found for the given ID, return a NotFound error.
+	if tester == nil {
+		return nil, status.Errorf(
+			codes.NotFound,
+			fmt.Sprintf("there is no tester with id: %s", req.Id),
+		)
+	}
+
+	// Call the SetLinkVideoTester method of the found plugin.
+	return tester.SetLinkVideoTester(ctx, req)
+}
+
+// GetLinkVideoTester handles the GetLinkVideoTester gRPC request.
+// It calls the GetLinkVideoTester method of the corresponding plugin.
+func (s *videoTesterServiceServer) GetLinkVideoTester(
+	ctx context.Context,
+	req *passport.GetLinkVideoTesterRequest,
+) (*passport.GetLinkVideoTesterResponse, error) {
+	// Look up the plugin associated with the requested tester ID.
+	tester := s.testerMap[req.Id]
+	// If no plugin is found for the given ID, return a NotFound error.
+	if tester == nil {
+		return nil, status.Errorf(
+			codes.NotFound,
+			fmt.Sprintf("there is no tester with id: %s", req.Id),
+		)
+	}
+
+	// Call the GetLinkVideoTester method of the found plugin.
+	return tester.GetLinkVideoTester(ctx, req)
+}
+
+// AttachVideoTester handles the AttachVideoTester gRPC request.
+// It calls the AttachVideoTester method of the corresponding plugin.
+func (s *videoTesterServiceServer) AttachVideoTester(
+	ctx context.Context,
+	req *passport.AttachVideoTesterRequest,
+) (*passport.AttachVideoTesterResponse, error) {
+	// Look up the plugin associated with the requested tester ID.
+	tester := s.testerMap[req.Id]
+	// If no plugin is found for the given ID, return a NotFound error.
+	if tester == nil {
+		return nil, status.Errorf(
+			codes.NotFound,
+			fmt.Sprintf("there is no tester with id: %s", req.Id),
+		)
+	}
+
+	// Call the AttachVideoTester method of the found plugin.
+	return tester.AttachVideoTester(ctx, req)
+}
+
+// Sends an HPD (Hot Plug Detect) pulse to a video tester.
+// It calls the HpdPulseVideoTester method of the corresponding plugin.
+func (s *videoTesterServiceServer) HpdPulseVideoTester(
+	ctx context.Context,
+	req *passport.HpdPulseVideoTesterRequest,
+) (*passport.HpdPulseVideoTesterResponse, error) {
+	// Look up the plugin associated with the requested tester ID.
+	tester := s.testerMap[req.Id]
+	// If no plugin is found for the given ID, return a NotFound error.
+	if tester == nil {
+		return nil, status.Errorf(
+			codes.NotFound,
+			fmt.Sprintf("there is no tester with id: %s", req.Id),
+		)
+	}
+
+	// Call the AttachVideoTester method of the found plugin.
+	return tester.HpdPulseVideoTester(ctx, req)
+}

@@ -158,3 +158,63 @@ func (s *videoTesterPlugin) LoadEdidVideoTester(
 ) (*passport.LoadEdidVideoTesterResponse, error) {
 	return s.unigraf_control_client.LoadEdidVideoTester(ctx, req)
 }
+
+// GetStreamInfoVideoTester handles the GetStreamInfoVideoTester gRPC request.
+// It calls the GetStreamInfoVideoTester method of the corresponding plugin.
+func (s *videoTesterPlugin) GetStreamInfoVideoTester(
+	ctx context.Context,
+	req *passport.GetStreamInfoVideoTesterRequest,
+) (*passport.GetStreamInfoVideoTesterResponse, error) {
+	// Call the GetStreamInfoVideoTester method of the found plugin.
+	return s.unigraf_control_client.GetStreamInfoVideoTester(ctx, req)
+}
+
+// ScreenshotVideoTester handles the ScreenshotVideoTester gRPC request.
+// It calls the ScreenshotVideoTester method of the corresponding plugin.
+func (s *videoTesterPlugin) ScreenshotVideoTester(
+	ctx context.Context,
+	req *passport.ScreenshotVideoTesterRequest,
+) (*passport.ScreenshotVideoTesterResponse, error) {
+	// Call the ScreenshotVideoTester method of the found plugin.
+	return s.unigraf_control_client.ScreenshotVideoTester(ctx, req)
+}
+
+// SetLinkVideoTester handles the SetLinkVideoTester gRPC request.
+// It calls the SetLinkVideoTester method of the corresponding plugin.
+func (s *videoTesterPlugin) SetLinkVideoTester(
+	ctx context.Context,
+	req *passport.SetLinkVideoTesterRequest,
+) (*passport.SetLinkVideoTesterResponse, error) {
+	// Call the SetLinkVideoTester method of the found plugin.
+	return s.unigraf_control_client.SetLinkVideoTester(ctx, req)
+}
+
+// GetLinkVideoTester handles the GetLinkVideoTester gRPC request.
+// It calls the GetLinkVideoTester method of the corresponding plugin.
+func (s *videoTesterPlugin) GetLinkVideoTester(
+	ctx context.Context,
+	req *passport.GetLinkVideoTesterRequest,
+) (*passport.GetLinkVideoTesterResponse, error) {
+	// Call the GetLinkVideoTester method of the found plugin.
+	return s.unigraf_control_client.GetLinkVideoTester(ctx, req)
+}
+
+// AttachVideoTester handles the AttachVideoTester gRPC request.
+// It calls the AttachVideoTester method of the corresponding plugin.
+func (s *videoTesterPlugin) AttachVideoTester(
+	ctx context.Context,
+	req *passport.AttachVideoTesterRequest,
+) (*passport.AttachVideoTesterResponse, error) {
+	// Call the AttachVideoTester method of the found plugin.
+	return s.unigraf_control_client.AttachVideoTester(ctx, req)
+}
+
+// HpdPulseVideoTester handles the AttachVideoTester gRPC request.
+// It calls the HpdPulseVideoTester method of the corresponding plugin.
+func (s *videoTesterPlugin) HpdPulseVideoTester(
+	ctx context.Context,
+	req *passport.HpdPulseVideoTesterRequest,
+) (*passport.HpdPulseVideoTesterResponse, error) {
+	// Call the AttachVideoTester method of the found plugin.
+	return s.unigraf_control_client.HpdPulseVideoTester(ctx, req)
+}
