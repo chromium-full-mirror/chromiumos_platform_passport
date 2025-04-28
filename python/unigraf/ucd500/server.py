@@ -12,6 +12,7 @@ using the UniTAP library.
 import atexit
 import logging
 import re
+import tempfile
 
 # pylint: disable=import-error
 from chromiumos.test.lab.api.passport import (
@@ -124,8 +125,166 @@ class UnigrafServer(video_pb2_grpc.VideoTesterServiceServicer):
             raise RuntimeError(f"Role is unknwon {request.role}")
 
         self._role = self._dev.select_role(roles[request.role])
+        self._dev.opf_handler = UniTAP.OpfHandlerInternal(
+            port_tx=self._role.dptx,
+            port_rx=self._role.dprx,
+        )
+        logging.info("Role was selected successfully.")
+
+        if isinstance(self._role, UniTAP.dev.UCD500.USBCSourceUSBCSink):
+            logging.info("Set USB-PD to UFP.")
+            self._role.pdcrx.capabilities.set_initial_role(
+                UniTAP.pdc.PdcDeviceRole.UFP
+            )
+            self._role.pdcrx.controls.reconnect()
 
         return video_pb2.SetRoleResponse(success=True)
+
+    @log_functionality.logger
+    def LoadEdidVideoTester(self, request, context):
+        """Loads the provided EDID data onto a given video tester."""
+
+        self._check_serial_active(request.id)
+
+        # pylint: disable=R1732
+        tmp = tempfile.NamedTemporaryFile(suffix=".bin")
+        # pylint: enable=R1732
+
+        # Open the file for writing.
+        with open(tmp.name, "wb") as f:
+            f.write(request.edid)
+
+        logging.info("Temp file name was %s", tmp.name)
+        ret = self._role.dprx.edid.load_edid(
+            path=tmp.name, load_on_device=True, stream=request.id_stream
+        )
+
+        return video_pb2.LoadEdidVideoTesterResponse(success=(len(ret) != 0))
+
+    @log_functionality.logger
+    def SetLinkVideoTester(self, request, context):
+        """Sets advanced link parameters for a given video tester."""
+        self._check_serial_active(request.id)
+        caps = self._role.dprx.link.capabilities.link_caps_status()
+
+        if request.HasField("mst"):
+            caps.mst = request.mst
+            if (
+                request.HasField("mst_sink_count")
+                and request.mst_sink_count != 0
+            ):
+                if request.mst is False:
+                    raise RuntimeError(
+                        "Mst is disabled but sink count was provided"
+                    )
+                caps.mst_sink_count = request.mst_sink_count
+
+        if request.HasField("max_lane"):
+            caps.max_lane = request.max_lane
+
+        self._role.dprx.link.capabilities.set(caps)
+
+        return video_pb2.SetLinkVideoTesterResponse()
+
+    # Do not log the request as the screenshots can get very big.
+    def ScreenshotVideoTester(self, request, context):
+        """Captures a screenshot from a specific stream of a video tester."""
+
+        logging.info("Running ScreenshotVideoTester with args: %s", request)
+        self._check_serial_active(request.id)
+
+        self._role.dprx.video_capturer.start(
+            frames_count=1,
+            stream_number=request.id_stream,
+        )
+        self._role.dprx.video_capturer.stop()
+        result = self._role.dprx.video_capturer.capture_result
+
+        # pylint: disable=R1732
+        tmp = tempfile.NamedTemporaryFile(suffix=".bmp")
+        # pylint: enable=R1732
+
+        result.save_image_to_file(
+            file_format=UniTAP.PictureFileFormat.BMP,
+            path=tmp.name,
+            index=0,
+        )
+
+        with open(tmp.name, "rb") as f:
+            return video_pb2.ScreenshotVideoTesterResponse(screenshot=f.read())
+
+    @log_functionality.logger
+    def GetStreamInfoVideoTester(self, request, context):
+        """Get the current advanced link parameters for a given video tester."""
+
+        self._check_serial_active(request.id)
+
+        stream_num = self._get_number_of_video_streams()
+
+        res = []
+        for i in range(0, stream_num):
+            stream = self._role.dprx.link.status.stream(i)
+            stream_info = video_pb2.StreamInfoVideoTester(
+                frame_rate=stream.video_mode.timing.frame_rate,
+                hactive=stream.video_mode.timing.hactive,
+                vactive=stream.video_mode.timing.vactive,
+                htotal=stream.video_mode.timing.htotal,
+                vtotal=stream.video_mode.timing.vtotal,
+                hstart=stream.video_mode.timing.hstart,
+                vstart=stream.video_mode.timing.vstart,
+                hswidth=stream.video_mode.timing.hswidth,
+                vswidth=stream.video_mode.timing.vswidth,
+            )
+            res.append(stream_info)
+
+        return video_pb2.GetStreamInfoVideoTesterResponse(streams=res)
+
+    @log_functionality.logger
+    def AttachVideoTester(self, request, context):
+        """Simulate attaching or detaching a display or sink on a video tester."""
+        self._check_serial_active(request.id)
+
+        if isinstance(self._role, UniTAP.dev.UCD500.USBCSourceUSBCSink):
+            self._role.pdcrx.controls.attach(request.attach)
+        else:
+            raise RuntimeError(
+                f"Attach operation for role {self._role} is not implemented."
+            )
+
+        return video_pb2.AttachVideoTesterResponse()
+
+    @log_functionality.logger
+    def HpdPulseVideoTester(self, request, context):
+        """Sends an HPD (Hot Plug Detect) pulse to a video tester."""
+        self._check_serial_active(request.id)
+
+        self._role.dprx.link.hpd_pulse()
+
+        return video_pb2.HpdPulseVideoTesterResponse()
+
+    @log_functionality.logger
+    def _get_number_of_video_streams(self):
+        # When using USB-C DPAM, caps.mst_sink_count will not be zero
+        # if we are in a detached state.
+        if isinstance(self._role, UniTAP.dev.UCD500.USBCSourceUSBCSink):
+            dut_dmap = self._role.pdcrx.dp_alt_mode.status.dut_dp_alt_mode
+            dpam_status = dut_dmap.dut_connection
+            if dpam_status == "No connection":
+                return 0
+
+        caps = self._role.dprx.link.capabilities.link_caps_status()
+
+        return caps.mst_sink_count if caps.mst else 1
+
+    @log_functionality.logger
+    def _check_serial_active(self, serial):
+        if self._serial is None:
+            raise RuntimeError(f"Tester {serial} is not open")
+
+        if serial != self._serial:
+            raise RuntimeError(
+                f"Serials dont match, got {serial} expected {self._serial}"
+            )
 
     @log_functionality.logger
     def __del__(self):
