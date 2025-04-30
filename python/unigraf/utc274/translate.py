@@ -16,10 +16,10 @@ from chromiumos.test.lab.api.passport import usb_tester_service_pb2
 
 
 SDK_F_MAP = {
-    usb_tester_service_pb2.PIN_ASSIGMENT: [
-        "dp_pin_assigment",
-        "update_dp_pin_assigment",
-        "select_dp_pin_assigment",
+    usb_tester_service_pb2.PIN_ASSIGNMENT: [
+        "dp_pin_assignment",
+        "update_dp_pin_assignment",
+        "select_dp_pin_assignment",
     ],
     usb_tester_service_pb2.USB_CHANNEL: [
         "usb_channel",
@@ -119,7 +119,7 @@ SDK_F_MAP = {
 }
 
 CAPABILITY_RETURN_FIELD_MAP = {
-    usb_tester_service_pb2.PIN_ASSIGMENT: "pin_mode",
+    usb_tester_service_pb2.PIN_ASSIGNMENT: "pin_mode",
     usb_tester_service_pb2.USB_CHANNEL: "usb_channel",
     usb_tester_service_pb2.POWER_ROLE: "power_role",
     usb_tester_service_pb2.DATA_ROLE: "data_role",
@@ -143,7 +143,7 @@ CAPABILITY_RETURN_FIELD_MAP = {
 
 DISCRETE_CAPABILITIES = [
     usb_tester_service_pb2.ACTIVE_CC,
-    usb_tester_service_pb2.PIN_ASSIGMENT,
+    usb_tester_service_pb2.PIN_ASSIGNMENT,
     usb_tester_service_pb2.USB_CHANNEL,
     usb_tester_service_pb2.POWER_ROLE,
     usb_tester_service_pb2.DATA_ROLE,
@@ -173,8 +173,8 @@ NON_DISCRETE_CAPABILITIES = [
 GRCP_CAPABILITY_SDK_VALUE_MAP_GRCP_VALUE = {
     (usb_tester_service_pb2.ACTIVE_CC, 0): usb_tester_service_pb2.CC1,
     (usb_tester_service_pb2.ACTIVE_CC, 1): usb_tester_service_pb2.CC2,
-    (usb_tester_service_pb2.PIN_ASSIGMENT, 0): usb_tester_service_pb2.C,
-    (usb_tester_service_pb2.PIN_ASSIGMENT, 1): usb_tester_service_pb2.D,
+    (usb_tester_service_pb2.PIN_ASSIGNMENT, 0): usb_tester_service_pb2.C,
+    (usb_tester_service_pb2.PIN_ASSIGNMENT, 1): usb_tester_service_pb2.D,
     (usb_tester_service_pb2.USB_CHANNEL, 0): usb_tester_service_pb2.USB_2_HS,
     (
         usb_tester_service_pb2.USB_CHANNEL,
@@ -196,8 +196,8 @@ GRCP_CAPABILITY_SDK_VALUE_MAP_GRCP_VALUE = {
 GRCP_CAPABILITY_VALUE_MAP_SDK_VALUE = {
     (usb_tester_service_pb2.ACTIVE_CC, usb_tester_service_pb2.CC1): 0,
     (usb_tester_service_pb2.ACTIVE_CC, usb_tester_service_pb2.CC2): 1,
-    (usb_tester_service_pb2.PIN_ASSIGMENT, usb_tester_service_pb2.C): 0,
-    (usb_tester_service_pb2.PIN_ASSIGMENT, usb_tester_service_pb2.D): 1,
+    (usb_tester_service_pb2.PIN_ASSIGNMENT, usb_tester_service_pb2.C): 0,
+    (usb_tester_service_pb2.PIN_ASSIGNMENT, usb_tester_service_pb2.D): 1,
     (usb_tester_service_pb2.USB_CHANNEL, usb_tester_service_pb2.USB_2_HS): 0,
     (
         usb_tester_service_pb2.USB_CHANNEL,
