@@ -13,7 +13,6 @@ import (
 	"os/exec"
 
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 
 	"go.chromium.org/chromiumos/config/go/test/lab/api/passport"
 	"go.chromiumos.org/chromiumos/platform/passport/server"
@@ -90,7 +89,11 @@ func (s *videoTesterPlugin) Init() error {
 	// Establish a gRPC connection to the Unigraf control application.
 	conn, err := grpc.Dial(
 		unigrafAppURI,
-		grpc.WithTransportCredentials(insecure.NewCredentials()), // Use insecure credentials for local communication.
+		grpc.WithInsecure(),
+		grpc.WithDefaultCallOptions(
+			grpc.MaxCallRecvMsgSize(64*1024*1024),
+			grpc.MaxCallSendMsgSize(64*1024*1024),
+		),
 	)
 
 	// Handle any errors that occur during the gRPC connection attempt.

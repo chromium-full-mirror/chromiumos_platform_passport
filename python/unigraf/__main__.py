@@ -33,7 +33,13 @@ from utils import log_functionality
 
 @log_functionality.logger
 def serve(port, device_type):
-    server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
+    server = grpc.server(
+        futures.ThreadPoolExecutor(max_workers=10),
+        options=[
+            ("grpc.max_receive_message_length", 64 * 1024 * 1024),
+            ("grpc.max_send_message_length", 64 * 1024 * 1024),
+        ],
+    )
 
     if device_type in ["ALL", "UTC274"]:
         usb_tester_service_pb2_grpc.add_UsbTesterServiceServicer_to_server(

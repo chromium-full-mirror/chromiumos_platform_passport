@@ -21,6 +21,8 @@ import (
 func InitializeGRPCServer(ctx context.Context) (*grpc.Server, error) {
 	// Configure server.
 	var serverOpts []grpc.ServerOption
+	serverOpts = append(serverOpts, grpc.MaxRecvMsgSize(64*1024*1024))
+	serverOpts = append(serverOpts, grpc.MaxSendMsgSize(64*1024*1024))
 	server := grpc.NewServer(serverOpts...)
 
 	// Register reflection service to help query/debug services.
