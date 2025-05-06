@@ -221,3 +221,12 @@ func (s *videoTesterPlugin) HpdPulseVideoTester(
 	// Call the AttachVideoTester method of the found plugin.
 	return s.unigraf_control_client.HpdPulseVideoTester(ctx, req)
 }
+
+// RunComplianceTest runs compliance test(s).
+func (s *videoTesterPlugin) RunComplianceTest(
+	ctx context.Context,
+	req *passport.RunComplianceTestRequest,
+) (*passport.RunComplianceTestResponse, error) {
+	// Call the AttachVideoTester method of the found plugin.
+	return s.unigraf_control_client.RunComplianceTest(ctx, req)
+}

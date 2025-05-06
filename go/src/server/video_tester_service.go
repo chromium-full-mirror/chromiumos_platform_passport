@@ -353,3 +353,22 @@ func (s *videoTesterServiceServer) HpdPulseVideoTester(
 	// Call the AttachVideoTester method of the found plugin.
 	return tester.HpdPulseVideoTester(ctx, req)
 }
+
+// Runs compliance test(s).
+func (s *videoTesterServiceServer) RunComplianceTest(
+	ctx context.Context,
+	req *passport.RunComplianceTestRequest,
+) (*passport.RunComplianceTestResponse, error) {
+	// Look up the plugin associated with the requested tester ID.
+	tester := s.testerMap[req.Id]
+	// If no plugin is found for the given ID, return a NotFound error.
+	if tester == nil {
+		return nil, status.Errorf(
+			codes.NotFound,
+			fmt.Sprintf("there is no tester with id: %s", req.Id),
+		)
+	}
+
+	// Call the AttachVideoTester method of the found plugin.
+	return tester.RunComplianceTest(ctx, req)
+}

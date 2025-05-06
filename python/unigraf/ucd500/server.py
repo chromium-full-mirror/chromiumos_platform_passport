@@ -22,6 +22,7 @@ from chromiumos.test.lab.api.passport import (
     video_tester_service_pb2_grpc as video_pb2_grpc,
 )
 import grpc
+from ucd500 import translate
 import UniTAP
 
 from utils import log_functionality
@@ -139,6 +140,56 @@ class UnigrafServer(video_pb2_grpc.VideoTesterServiceServicer):
             self._role.pdcrx.controls.reconnect()
 
         return video_pb2.SetRoleResponse(success=True)
+
+    def RunComplianceTest(self, request, _):
+        """Runs compliance test(s) for a given group and returns all results."""
+        self._check_serial_active(request.id)
+
+        # Validate that all test groups exist so that we fail early.
+        for test in request.tests:
+            if test.group_id not in translate.UCD500_TEST_GROUPS:
+                raise RuntimeError(f"Test group is unknown {request.group_id}")
+
+        self._role.dut_tests.clear_results()
+        for test in request.tests:
+            test_group = translate.UCD500_TEST_GROUPS[test.group_id]
+            parameters = self._role.dut_tests.get_default_parameters(
+                test_group["default_params"]
+            )
+            self._role.dut_tests.run(
+                test_group["group_id"],
+                test.test_id,
+                parameters,
+            )
+
+        i = 0
+        results_array = []
+        results = self._role.dut_tests.get_all_tests_results()
+        for result in results.all_test_results():
+            logging.info(
+                "Ran test %s with result %s",
+                result.test_name,
+                result.test_result,
+            )
+
+            result_obj = video_pb2.ComplianceTestResultVideoTester(
+                test=request.tests[i],
+                status=translate.TEST_UNITAP_TO_GRPC[result.test_result],
+            )
+            results_array.append(result_obj)
+            i = i + 1
+
+        # pylint: disable=R1732
+        tmp = tempfile.NamedTemporaryFile()
+        # pylint: enable=R1732
+
+        # This automatically appends .html to the filename passed to it.
+        self._role.dut_tests.make_report(tmp.name, tested_by="Passport")
+
+        with open(f"{tmp.name}.html", "rb") as f:
+            return video_pb2.RunComplianceTestResponse(
+                results=results_array, results_html=f.read()
+            )
 
     @log_functionality.logger
     def LoadEdidVideoTester(self, request, context):
