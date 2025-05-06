@@ -59,7 +59,7 @@ SSH COMMAND: ssh -L 8300:1XXX.XXX.XXX.XXX:8300 moblab@YYY.YYY.YYY.YYY
 
 Once a service is running, it can be verified in a separate terminal by running:
 ```
-./go/bin/passport -mode DETECT
+./go/bin/passport switches detect
 ```
 
 This will probe for all components connected to the machine and log them
@@ -67,14 +67,14 @@ to STDOUT. This can also be used to check an already running service on a remote
 machine by forwarding the remote port to your local machine. The default port is
 8300 but a different one can be provided via the `-port` flag e.g.
 ```
-./go/bin/passport -port 9999 -mode DETECT
+./go/bin/passport switches detect -port 9999
 ```
 
-It's also possible to quickly test the executable locally without starting two separate
-processes by running:
+Additionally, you can test enabling/disabling specific switches from the command line
+using:
 ```
-./go/bin/passport -mode TEST
+./go/bin/passport switches enable [-switches SWITCH1,SWITCH2]
+./go/bin/passport switches disable [-switches SWITCH1,SWITCH2]
 ```
 
-This will perform the same actions as `DETECT` except both the client and server
-will be started in the same process without needing a separate terminal window.
+If you omit the `-switches` argument then all found switches will be used.

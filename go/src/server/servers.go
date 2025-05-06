@@ -70,7 +70,7 @@ func Serve(ctx context.Context, server *grpc.Server, port int) error {
 
 	err = portdiscovery.WriteServiceMetadata("cros-passport", lis.Addr().String(), log.Default())
 	if err != nil {
-		slog.Warn("error when writing to metadata file: ", err)
+		slog.Warn("error when writing to metadata file", "error", err)
 	}
 
 	slog.Debug("gRPC service info", "serviceInfo", server.GetServiceInfo())
