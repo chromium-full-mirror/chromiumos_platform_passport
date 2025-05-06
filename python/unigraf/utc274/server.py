@@ -378,3 +378,32 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
         return usb_tester_service_pb2.LoadEdidReply(
             err_code=ret, error_msg=("" if ret == 0 else "failed to load edid")
         )
+
+    @log_functionality.logger
+    def GetPdos(self, request, _context):
+        """This method is used to do a hard reset."""
+        serial = request.id
+
+        if serial not in self._open_devices:
+            logging.error("Invalid serial %s when taking device", serial)
+            raise ValueError(f"No device with serial {serial}")
+
+        if serial not in self._serial_locks:
+            logging.error("Invalid serial %s when taking lock", serial)
+            raise ValueError(f"No device lock with serial {serial}")
+
+        with self._serial_locks[serial]:
+            dev = self._open_devices[serial]
+
+            ret = dev.pd.update_dut_pdo()
+            sdk_pdos = dev.pd.dut_pdo()
+            src_pdos = [
+                int.from_bytes(bytearray(pdo), byteorder="little", signed=False)
+                for pdo in sdk_pdos
+            ]
+
+            return usb_tester_service_pb2.GetPdosReply(
+                err_code=ret,
+                error_msg="Failed to update PDOs" if ret else "",
+                src_pdos=src_pdos,
+            )

@@ -316,3 +316,37 @@ func (s *usbTesterServiceServer) LoadEdid(
 
 	return tester.LoadEdid(ctx, req)
 }
+
+// This method is used to reset the PD communication.
+func (s *usbTesterServiceServer) ResetPd(
+	ctx context.Context,
+	req *passport.ResetPdRequest,
+) (*passport.ResetPdReply, error) {
+
+	tester := s.testerMap[req.Id]
+	if tester == nil {
+		return nil, status.Errorf(
+			codes.NotFound,
+			fmt.Sprintf("there is no USB tester with id: %s", req.Id),
+		)
+	}
+
+	return tester.ResetPd(ctx, req)
+}
+
+// This method is used get the power delivery objects.
+func (s *usbTesterServiceServer) GetPdos(
+	ctx context.Context,
+	req *passport.GetPdosRequest,
+) (*passport.GetPdosReply, error) {
+
+	tester := s.testerMap[req.Id]
+	if tester == nil {
+		return nil, status.Errorf(
+			codes.NotFound,
+			fmt.Sprintf("there is no USB tester with id: %s", req.Id),
+		)
+	}
+
+	return tester.GetPdos(ctx, req)
+}

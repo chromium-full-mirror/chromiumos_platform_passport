@@ -187,3 +187,21 @@ func (s *usbTesterPlugin) LoadEdid(
 
 	return s.unigraf_control_client.LoadEdid(ctx, req)
 }
+
+// This method is used to reset power delivery.
+func (s *usbTesterPlugin) ResetPd(
+	ctx context.Context,
+	req *passport.ResetPdRequest,
+) (*passport.ResetPdReply, error) {
+
+	return s.unigraf_control_client.ResetPd(ctx, req)
+}
+
+// This method is used get the power delivery objects.
+func (s *usbTesterPlugin) GetPdos(
+	ctx context.Context,
+	req *passport.GetPdosRequest,
+) (*passport.GetPdosReply, error) {
+
+	return s.unigraf_control_client.GetPdos(ctx, req)
+}

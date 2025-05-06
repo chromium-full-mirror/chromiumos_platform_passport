@@ -33,14 +33,12 @@ WORKDIR "/usr/local/bin/unigraf"
 COPY --from=apiconfig python/ chromiumos_apis
 COPY --from=passport python/ .
 
-ARG UTC274_SDK_VERSION=1.1.3.652
+ARG UTC274_SDK_VERSION=1.1.11.673
 ARG UCD500_SDK_VERSION=3.5.284.12136
 
 # Install the unigraf control dependencies and the chromiumos APIs.
 RUN wget https://storage.googleapis.com/chromeos-localmirror/distfiles/UTCLibrary-${UTC274_SDK_VERSION}.tar.gz \
     && wget https://storage.googleapis.com/chromeos-localmirror/distfiles/UniTAP-${UCD500_SDK_VERSION}.tar.gz \
-    && echo "33890069b63255398d3aa4d17e1be6d1583671b6eefa09435f9a64cefd3367a9  UTCLibrary-${UTC274_SDK_VERSION}.tar.gz" | sha256sum --check \
-    && echo "6bec0b4a20e2daa3c7055178b6ac5d21d29354f35d550dff5b2286628fd50531  UniTAP-${UCD500_SDK_VERSION}.tar.gz" | sha256sum --check \
     && venv/bin/pip install --require-hashes -r unigraf/requirements.txt \
     && venv/bin/pip install --no-deps --no-index chromiumos_apis/ \
     && venv/bin/pyinstaller \

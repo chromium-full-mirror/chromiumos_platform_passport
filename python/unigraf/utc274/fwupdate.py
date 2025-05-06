@@ -43,14 +43,14 @@ class Utc274FwUpdater:
     @log_functionality.logger
     def __init__(self, force_fw):
         self._fw_blob_path = "/opt/unigraf/"
-        self.force_fw = force_fw
+        self._force_fw = force_fw
 
         self._fw_updater = UTCLibrary.FWUpdate()
         self._fw_updater.set_fw_folder_path(self._fw_blob_path)
         logging.info(
             "Utc274FwUpdater params fwpath:%s force: %s",
             self._fw_blob_path,
-            self.force_fw,
+            self._force_fw,
         )
 
         url = urllib.parse.urljoin(
