@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"go.chromium.org/chromiumos/config/go/test/lab/api/passport"
 )
@@ -60,7 +61,10 @@ func (s *switchServiceServer) ConfigureSwitchPort(ctx context.Context, req *pass
 	slog.Info("Received passport.ConfigureSwitchPortRequest", "req", req)
 	plugin, err := s.pluginForSwitch(ctx, req.GetSwitchId())
 	if err != nil {
-		return nil, fmt.Errorf("failed to fetch plugin for switch: %w", err)
+		plugin, err = s.pluginForSwitch(ctx, strings.ToUpper(req.GetSwitchId()))
+		if err != nil {
+			return nil, fmt.Errorf("failed to fetch plugin for switch: %w", err)
+		}
 	}
 	slog.Info("Configuring switch", "id", req.GetSwitchId(), "plugin", plugin.Name())
 
