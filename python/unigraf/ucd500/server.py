@@ -13,6 +13,7 @@ import atexit
 import logging
 import re
 import tempfile
+import time
 
 # pylint: disable=import-error
 from chromiumos.test.lab.api.passport import (
@@ -138,6 +139,7 @@ class UnigrafServer(video_pb2_grpc.VideoTesterServiceServicer):
                 UniTAP.pdc.PdcDeviceRole.UFP
             )
             self._role.pdcrx.controls.reconnect()
+            time.sleep(5)
 
         return video_pb2.SetRoleResponse(success=True)
 
@@ -233,9 +235,27 @@ class UnigrafServer(video_pb2_grpc.VideoTesterServiceServicer):
         if request.HasField("max_lane"):
             caps.max_lane = request.max_lane
 
+        if request.HasField("scrambler_seed"):
+            self._role.dprx.link.scrambler_seed = request.scrambler_seed
+
         self._role.dprx.link.capabilities.set(caps)
 
         return video_pb2.SetLinkVideoTesterResponse()
+
+    @log_functionality.logger
+    def GetLinkVideoTester(self, request, context):
+        """Get the current advanced link parameters for a given video tester."""
+
+        self._check_serial_active(request.id)
+        caps = self._role.dprx.link.capabilities.link_caps_status()
+
+        link_info = video_pb2.GetLinkVideoTesterResponse()
+        link_info.mst = caps.mst
+        link_info.mst_sink_count = caps.mst_sink_count
+        link_info.max_lane = caps.max_lane
+        link_info.scrambler_seed = self._role.dprx.link.scrambler_seed
+
+        return link_info
 
     # Do not log the request as the screenshots can get very big.
     def ScreenshotVideoTester(self, request, context):
@@ -275,6 +295,15 @@ class UnigrafServer(video_pb2_grpc.VideoTesterServiceServicer):
         res = []
         for i in range(0, stream_num):
             stream = self._role.dprx.link.status.stream(i)
+            color_format = translate.SDK_COLOR_FORMAT_TO_GRPC[
+                stream.video_mode.color_info.color_format
+            ]
+            colometry = translate.SDK_COLOMETRY_TO_GRPC[
+                stream.video_mode.color_info.colorimetry
+            ]
+            dynamic_range = translate.SDK_DYNAMIC_RANGE_TO_GRPC[
+                stream.video_mode.color_info.dynamic_range
+            ]
             stream_info = video_pb2.StreamInfoVideoTester(
                 frame_rate=stream.video_mode.timing.frame_rate,
                 hactive=stream.video_mode.timing.hactive,
@@ -285,6 +314,11 @@ class UnigrafServer(video_pb2_grpc.VideoTesterServiceServicer):
                 vstart=stream.video_mode.timing.vstart,
                 hswidth=stream.video_mode.timing.hswidth,
                 vswidth=stream.video_mode.timing.vswidth,
+                bpp=stream.video_mode.color_info.bpp,
+                color_format=color_format,
+                colormetry=colometry,
+                dynamic_range=dynamic_range,
+                crc=stream.crc,
             )
             res.append(stream_info)
 
