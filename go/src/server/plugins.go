@@ -67,7 +67,7 @@ type VideoTesterPlugin interface {
 	passport.VideoTesterServiceServer
 }
 
-// RegiseterVideoTester registers a video tester controller plugin with the server application.
-func RegiseterVideoTester(plugin VideoTesterPlugin) {
+// RegisterVideoTester registers a video tester controller plugin with the server application.
+func RegisterVideoTester(plugin VideoTesterPlugin) {
 	videoTesterPlugins = append(videoTesterPlugins, plugin)
 }

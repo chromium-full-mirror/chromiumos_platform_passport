@@ -2,8 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// Package ucd500 implements a Passport plugin for controlling UCD500 video testers.
-package ucd500
+// Package ucd422 implements a Passport plugin for controlling UCD422 video testers.
+package ucd422
 
 import (
 	"context"
@@ -19,7 +19,7 @@ import (
 )
 
 // videoTesterPlugin implements the passport.VideoTesterPlugin interface
-// for controlling UCD500 devices.
+// for controlling UCD422 devices.
 type videoTesterPlugin struct {
 	// unigraf_control_client is the gRPC client for communicating with the
 	// external Unigraf control application.
@@ -33,7 +33,7 @@ const (
 	// UNIGRAF_APP_ADDR is the network address where the Unigraf control application listens.
 	UNIGRAF_APP_ADDR = "localhost"
 	// UNIGRAF_APP_PORT is the network port where the Unigraf control application listens.
-	UNIGRAF_APP_PORT = 8082
+	UNIGRAF_APP_PORT = 8083
 )
 
 // init registers this plugin with the Passport server during package initialization.
@@ -60,7 +60,7 @@ func (s *videoTesterPlugin) Init() error {
 		"--port",
 		fmt.Sprintf("%d", UNIGRAF_APP_PORT),
 		"--device",
-		"UCD500",
+		"UCD422",
 	)
 	// Redirect the standard output and error of the command to the current process's output.
 	cmd.Stdout = os.Stdout
@@ -111,7 +111,7 @@ func (s *videoTesterPlugin) Init() error {
 
 // Name returns the name of this video tester plugin.
 func (s *videoTesterPlugin) Name() string {
-	return "UCD500"
+	return "UCD422"
 }
 
 // GetVideoTesters forwards the GetVideoTesters request to the Unigraf control application.
