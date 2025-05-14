@@ -16,6 +16,7 @@ func RootCmd() *cobra.Command {
 	}
 
 	cmd.AddCommand(
+		Capture(),
 		Detect(),
 	)
 	return cmd
