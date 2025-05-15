@@ -21,8 +21,8 @@ import logging
 from chromiumos.test.lab.api.passport import usb_tester_service_pb2_grpc
 from chromiumos.test.lab.api.passport import video_tester_service_pb2_grpc
 import grpc
-from ucd422 import server as ucd422ctl
-from ucd500 import server as ucd500ctl
+from ucd import ucd422
+from ucd import ucd500
 from utc274 import fwupdate as utc274fwup
 from utc274 import server as utc274ctl
 
@@ -49,12 +49,12 @@ def serve(port, device_type):
 
     if device_type in ["ALL", "UCD500"]:
         video_tester_service_pb2_grpc.add_VideoTesterServiceServicer_to_server(
-            ucd500ctl.UnigrafServer(), server
+            ucd500.Ucd500Server(), server
         )
 
     if device_type in ["ALL", "UCD422"]:
         video_tester_service_pb2_grpc.add_VideoTesterServiceServicer_to_server(
-            ucd422ctl.UnigrafServer(), server
+            ucd422.Ucd422Server(), server
         )
 
     server.add_insecure_port(f"[::]:{port}")

@@ -1,3 +1,7 @@
+# Copyright 2025 The ChromiumOS Authors
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
 """Translate values to and from gRPC to UCD500 specific values."""
 
 # Copyright 2025 The ChromiumOS Authors
@@ -12,8 +16,12 @@ import UniTAP
 
 
 # pylint: enable=import-error
-UCD_422_ROLES = {
+UCD_ROLES = {
     video_pb2.ROLE_HDMISOURCE_HDMISINK: UniTAP.dev.UCD422.HDMISourceHDMISink,
+    video_pb2.ROLE_DPSOURCE_USBCSINK: UniTAP.dev.UCD500.DPSourceUSBCSink,
+    video_pb2.ROLE_DPSOURCE_DPSINK: UniTAP.dev.UCD500.DPSourceDPSink,
+    video_pb2.ROLE_USBCSOURCE_USBCSINK: UniTAP.dev.UCD500.USBCSourceUSBCSink,
+    video_pb2.ROLE_USBCSOURCE_DPSINK: UniTAP.dev.UCD500.USBCSourceDPSink,
 }
 
 TEST_UNITAP_TO_GRPC = {
@@ -23,7 +31,7 @@ TEST_UNITAP_TO_GRPC = {
     3: video_pb2.COMPLIANCE_TEST_ABORTED,
 }
 
-UCD422_TEST_GROUPS = {
+TEST_GROUPS = {
     video_pb2.GROUP_HDMI_RX_CRC_TEST: {
         "group_id": UniTAP.TestGroupId.HDMI_RX_CRC,
         "default_params": UniTAP.CrcVideoTestParam,
@@ -35,6 +43,46 @@ UCD422_TEST_GROUPS = {
     video_pb2.GROUP_HD_TX_CONTINUITY_TEST: {
         "group_id": UniTAP.TestGroupId.HD_TX_CONTINUITY,
         "default_params": UniTAP.HdmiSinkContinuityDUTTestParam,
+    },
+    video_pb2.GROUP_AUDIO_TEST: {
+        "group_id": UniTAP.TestGroupId.AUDIO_TEST,
+        "default_params": UniTAP.AudioTestParam,
+    },
+    video_pb2.GROUP_PIXEL_LEVEL_VIDEO_TEST: {
+        "group_id": UniTAP.TestGroupId.PIXEL_VIDEO_TEST,
+        "default_params": UniTAP.VideoPixelTestParam,
+    },
+    video_pb2.GROUP_CRC_BASED_VIDEO_TEST: {
+        "group_id": UniTAP.TestGroupId.DP_RX_CRC,
+        "default_params": UniTAP.CrcVideoTestParam,
+    },
+    video_pb2.GROUP_LINK_TEST: {
+        "group_id": UniTAP.TestGroupId.DP_RX_SIMPLE_LT,
+        "default_params": UniTAP.LinkConfigTestParam,
+    },
+    video_pb2.GROUP_DISPLAYPORT_1_4_LINK_LAYER_CTS: {
+        "group_id": UniTAP.TestGroupId.DP_RX_LL_CTS,
+        "default_params": UniTAP.Dp14SourceDUTTestParam,
+    },
+    video_pb2.GROUP_DISPLAYPORT_1_4_DSC_LINK_LAYER_CTS: {
+        "group_id": UniTAP.TestGroupId.DP_RX_LL_CTS_DSC,
+        "default_params": UniTAP.Dp14SourceDUTTestParam,
+    },
+    video_pb2.GROUP_DISPLAYPORT_1_4_DISPLAYID_CTS_SOURCE_TEST: {
+        "group_id": UniTAP.TestGroupId.DP_RX_DISPLAYID,
+        "default_params": UniTAP.Dp14SourceDUTTestParam,
+    },
+    video_pb2.GROUP_DISPLAYPORT_2_1_LINK_LAYER_SOURCE_DUT_CTS: {
+        "group_id": UniTAP.TestGroupId.DP_2_1_RX_LL_CTS,
+        "default_params": UniTAP.Dp21SourceDUTTestParam,
+    },
+    video_pb2.GROUP_DISPLAYPORT_2_1_DSC_CTS_SOURCE_DUT: {
+        "group_id": UniTAP.TestGroupId.DP_2_1_RX_DSC_CTS,
+        "default_params": UniTAP.Dp21SourceDUTTestParam,
+    },
+    video_pb2.GROUP_DISPLAYPORT_2_1_DISPLAYID_CTS_SOURCE_TEST: {
+        "group_id": UniTAP.TestGroupId.DP_2_1_RX_DISPAYID,
+        "default_params": UniTAP.Dp21SourceDUTTestParam,
     },
 }
 
@@ -70,6 +118,49 @@ SDK_FRL_MODE_TO_GRPC = {
     UniTAP.FrlMode.Mode_4lanes_8gbps: video_pb2.FRL_MODE_4LANES_8GBPS,
     UniTAP.FrlMode.Mode_4lanes_10gbps: video_pb2.FRL_MODE_4LANES_10GBPS,
     UniTAP.FrlMode.Mode_4lanes_12gbps: video_pb2.FRL_MODE_4LANES_12GBPS,
+}
+
+SDK_COLOR_FORMAT_TO_GRPC = {
+    UniTAP.ColorInfo.ColorFormat.CF_NONE: video_pb2.STREAM_INFO_CF_NONE,
+    UniTAP.ColorInfo.ColorFormat.CF_UNKNOWN: video_pb2.STREAM_INFO_CF_UNKNOWN,
+    UniTAP.ColorInfo.ColorFormat.CF_RGB: video_pb2.STREAM_INFO_CF_RGB,
+    UniTAP.ColorInfo.ColorFormat.CF_YCbCr_422: video_pb2.STREAM_INFO_CF_YCBCR_422,
+    UniTAP.ColorInfo.ColorFormat.CF_YCbCr_444: video_pb2.STREAM_INFO_CF_YCBCR_444,
+    UniTAP.ColorInfo.ColorFormat.CF_YCbCr_420: video_pb2.STREAM_INFO_CF_YCBCR_420,
+    UniTAP.ColorInfo.ColorFormat.CF_IDO_DEFINED: video_pb2.STREAM_INFO_CF_IDO_DEFINED,
+    UniTAP.ColorInfo.ColorFormat.CF_Y_ONLY: video_pb2.STREAM_INFO_CF_Y_ONLY,
+    UniTAP.ColorInfo.ColorFormat.CF_RAW: video_pb2.STREAM_INFO_CF_RAW,
+    UniTAP.ColorInfo.ColorFormat.CF_DSC: video_pb2.STREAM_INFO_CF_DSC,
+}
+
+SDK_COLOMETRY_TO_GRPC = {
+    UniTAP.ColorInfo.Colorimetry.CM_NONE: video_pb2.STREAM_INFO_CM_NONE,
+    UniTAP.ColorInfo.Colorimetry.CM_RESERVED: video_pb2.STREAM_INFO_CM_RESERVED,
+    UniTAP.ColorInfo.Colorimetry.CM_sRGB: video_pb2.STREAM_INFO_CM_SRGB,
+    UniTAP.ColorInfo.Colorimetry.CM_SMPTE_170M: video_pb2.STREAM_INFO_CM_SMPTE_170M,
+    UniTAP.ColorInfo.Colorimetry.CM_ITUR_BT601: video_pb2.STREAM_INFO_CM_ITUR_BT601,
+    UniTAP.ColorInfo.Colorimetry.CM_ITUR_BT709: video_pb2.STREAM_INFO_CM_ITUR_BT709,
+    UniTAP.ColorInfo.Colorimetry.CM_xvYCC601: video_pb2.STREAM_INFO_CM_XVYCC601,
+    UniTAP.ColorInfo.Colorimetry.CM_xvYCC709: video_pb2.STREAM_INFO_CM_XVYCC709,
+    UniTAP.ColorInfo.Colorimetry.CM_sYCC601: video_pb2.STREAM_INFO_CM_SYCC601,
+    UniTAP.ColorInfo.Colorimetry.CM_AdobeYCC601: video_pb2.STREAM_INFO_CM_ADOBEYCC601,
+    UniTAP.ColorInfo.Colorimetry.CM_AdobeRGB: video_pb2.STREAM_INFO_CM_ADOBERGB,
+    UniTAP.ColorInfo.Colorimetry.CM_ITUR_BT2020_YcCbcCrc: video_pb2.STREAM_INFO_CM_ITUR_BT2020_YCCBCCRC,
+    UniTAP.ColorInfo.Colorimetry.CM_ITUR_BT2020_YCbCr: video_pb2.STREAM_INFO_CM_ITUR_BT2020_YCBCR,
+    UniTAP.ColorInfo.Colorimetry.CM_ITUR_BT2020_RGB: video_pb2.STREAM_INFO_CM_ITUR_BT2020_RGB,
+    UniTAP.ColorInfo.Colorimetry.CM_RGB_WIDE_GAMUT_FIX: video_pb2.STREAM_INFO_CM_RGB_WIDE_GAMUT_FIX,
+    UniTAP.ColorInfo.Colorimetry.CM_RGB_WIDE_GAMUT_FLT: video_pb2.STREAM_INFO_CM_RGB_WIDE_GAMUT_FLT,
+    UniTAP.ColorInfo.Colorimetry.CM_DCI_P3: video_pb2.STREAM_INFO_CM_DCI_P3,
+    UniTAP.ColorInfo.Colorimetry.CM_DICOM_1_4_GRAY_SCALE: video_pb2.STREAM_INFO_CM_DICOM_1_4_GRAY_SCALE,
+    UniTAP.ColorInfo.Colorimetry.CM_CUSTOM_COLOR_PROFILE: video_pb2.STREAM_INFO_CM_CUSTOM_COLOR_PROFILE,
+    UniTAP.ColorInfo.Colorimetry.CM_opYCC601: video_pb2.STREAM_INFO_CM_OPYCC601,
+    UniTAP.ColorInfo.Colorimetry.CM_opRGB: video_pb2.STREAM_INFO_CM_OPRGB,
+}
+
+SDK_DYNAMIC_RANGE_TO_GRPC = {
+    UniTAP.ColorInfo.DynamicRange.DR_UNKNOWN: video_pb2.STREAM_INFO_DR_UNKNOWN,
+    UniTAP.ColorInfo.DynamicRange.DR_VESA: video_pb2.STREAM_INFO_DR_VESA,
+    UniTAP.ColorInfo.DynamicRange.DR_CTA: video_pb2.STREAM_INFO_DR_CTA,
 }
 
 SDK_COLOR_FORMAT_TO_GRPC = {

@@ -13,7 +13,6 @@ import atexit
 import logging
 import re
 import tempfile
-import time
 
 # pylint: disable=import-error
 from chromiumos.test.lab.api.passport import (
@@ -23,7 +22,7 @@ from chromiumos.test.lab.api.passport import (
     video_tester_service_pb2_grpc as video_pb2_grpc,
 )
 import grpc
-from ucd500 import translate
+from ucd import translate
 import UniTAP
 
 from utils import log_functionality
@@ -32,25 +31,55 @@ from utils import log_functionality
 # pylint: enable=import-error
 
 
-class UnigrafServer(video_pb2_grpc.VideoTesterServiceServicer):
-    """Implements the gRPC service for controlling Unigraf video testers.
+class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
+    """Implements some functionality common to all of the unigraf video testers.
 
-    This class provides methods to discover, open, close, and configure
-    Unigraf UCD-500 series video testing devices. It uses the UniTAP library
-    to interact with the hardware.
+    Methods that need specialization:
+    - SetRoleVideoTester
+    - SetLinkVideoTester
+    - GetLinkVideoTester
+    - HpdPulseVideoTester
+    - AttachVideoTester
+    - _get_number_of_video_streams
     """
 
     @log_functionality.logger
-    def __init__(self):
+    def __init__(self, device_name):
         self._dev = None
         self._serial = None
         self._role = None
+        self._port_rx = None
+        self._port_tx = None
+        self._device_name = device_name
 
         self._tsilib = UniTAP.TsiLib()
         atexit.register(self.__del__)
 
-        logging.info("VideoTesterServiceServicer init done")
+    # =========== Not implemented methods ===========
+    def SetRoleVideoTester(self, request, context):
+        """Selects a specific role for a given video tester."""
+        raise NotImplementedError("Method not implemented!")
 
+    def SetLinkVideoTester(self, request, context):
+        """Sets advanced link parameters for a given video tester."""
+        raise NotImplementedError("Method not implemented!")
+
+    def GetLinkVideoTester(self, request, context):
+        """Get the current advanced link parameters."""
+        raise NotImplementedError("Method not implemented!")
+
+    def HpdPulseVideoTester(self, request, context):
+        """Send an HPD (Hot Plug Detect) pulse to a video tester."""
+        raise NotImplementedError("Method not implemented!")
+
+    def AttachVideoTester(self, request, context):
+        """Simulates attaching/detaching."""
+        raise NotImplementedError("Method not implemented!")
+
+    def _get_number_of_video_streams(self):
+        raise RuntimeError("Method is not implemented!")
+
+    # =========== Common methods ===========
     @log_functionality.logger
     def GetVideoTesters(self, _, context):
         """Retrieves a list of available video testers."""
@@ -58,10 +87,10 @@ class UnigrafServer(video_pb2_grpc.VideoTesterServiceServicer):
         testers = self._tsilib.get_list_of_available_devices()
         ret = []
         # Output of `get_list_of_available_devices` is of the form
-        # ['0: UCD-500 [xxxxxxx]', '1: UCD-500 [xxxxx]']
+        # ['0: UCD-abc [xxxxxxx]', '1: UCD-abc [yyyyyyy]']
         # where the number between the square brackets is the device serial.
         for tester in testers:
-            if "UCD-500" not in tester.upper():
+            if self._device_name.upper() not in tester.upper():
                 continue
 
             serials = re.findall(r"\[([^]]*)\]", tester)
@@ -74,7 +103,7 @@ class UnigrafServer(video_pb2_grpc.VideoTesterServiceServicer):
             ret.append(
                 video_pb2.VideoTester(
                     id=serials[0],
-                    name="UCD-500",
+                    name=self._device_name.upper(),
                 )
             )
 
@@ -110,54 +139,18 @@ class UnigrafServer(video_pb2_grpc.VideoTesterServiceServicer):
 
         return video_pb2.CloseVideoTesterResponse(success=True)
 
-    @log_functionality.logger
-    def SetRoleVideoTester(self, request, _):
-        """Selects a specific role for a given video tester."""
-
-        if request.id != self._serial:
-            raise RuntimeError(
-                f"Serials dont match, got {request.id} expected {self._serial}"
-            )
-
-        roles = {
-            video_pb2.ROLE_DPSOURCE_USBCSINK: UniTAP.dev.UCD500.DPSourceUSBCSink,
-            video_pb2.ROLE_DPSOURCE_DPSINK: UniTAP.dev.UCD500.DPSourceDPSink,
-            video_pb2.ROLE_USBCSOURCE_USBCSINK: UniTAP.dev.UCD500.USBCSourceUSBCSink,
-            video_pb2.ROLE_USBCSOURCE_DPSINK: UniTAP.dev.UCD500.USBCSourceDPSink,
-        }
-
-        if request.role not in roles:
-            raise RuntimeError(f"Role is unknwon {request.role}")
-
-        self._role = self._dev.select_role(roles[request.role])
-        self._dev.opf_handler = UniTAP.OpfHandlerInternal(
-            port_tx=self._role.dptx,
-            port_rx=self._role.dprx,
-        )
-        logging.info("Role was selected successfully.")
-
-        if isinstance(self._role, UniTAP.dev.UCD500.USBCSourceUSBCSink):
-            logging.info("Set USB-PD to UFP.")
-            self._role.pdcrx.capabilities.set_initial_role(
-                UniTAP.pdc.PdcDeviceRole.UFP
-            )
-            self._role.pdcrx.controls.reconnect()
-            time.sleep(5)
-
-        return video_pb2.SetRoleResponse(success=True)
-
     def RunComplianceTest(self, request, _):
         """Runs compliance test(s) for a given group and returns all results."""
         self._check_serial_active(request.id)
 
         # Validate that all test groups exist so that we fail early.
         for test in request.tests:
-            if test.group_id not in translate.UCD500_TEST_GROUPS:
+            if test.group_id not in translate.TEST_GROUPS:
                 raise RuntimeError(f"Test group is unknown {request.group_id}")
 
         self._role.dut_tests.clear_results()
         for test in request.tests:
-            test_group = translate.UCD500_TEST_GROUPS[test.group_id]
+            test_group = translate.TEST_GROUPS[test.group_id]
             parameters = self._role.dut_tests.get_default_parameters(
                 test_group["default_params"]
             )
@@ -211,68 +204,11 @@ class UnigrafServer(video_pb2_grpc.VideoTesterServiceServicer):
             f.write(request.edid)
 
         logging.info("Temp file name was %s", tmp.name)
-        ret = self._role.dprx.edid.load_edid(
+        ret = self._port_rx.edid.load_edid(
             path=tmp.name, load_on_device=True, stream=request.id_stream
         )
 
         return video_pb2.LoadEdidVideoTesterResponse(success=(len(ret) != 0))
-
-    @log_functionality.logger
-    def SetLinkVideoTester(self, request, context):
-        """Sets advanced link parameters for a given video tester."""
-        self._check_serial_active(request.id)
-        caps = self._role.dprx.link.capabilities.link_caps_status()
-
-        if request.HasField("mst"):
-            caps.mst = request.mst
-
-        if request.HasField("mst_sink_count"):
-            caps.mst_sink_count = request.mst_sink_count
-
-        if request.HasField("max_lane"):
-            caps.max_lane = request.max_lane
-
-        if request.HasField("scrambler_seed"):
-            self._role.dprx.link.scrambler_seed = request.scrambler_seed
-
-        if request.HasField("ss_sbm"):
-            caps.ss_sbm = request.ss_sbm
-
-        if request.HasField("fec"):
-            caps.fec = request.fec
-
-        if request.HasField("tps4"):
-            caps.tps4 = request.tps4
-
-        if request.HasField("tps3"):
-            caps.tps3 = request.tps3
-
-        if request.HasField("dsc"):
-            caps.dsc = request.dsc
-
-        self._role.dprx.link.capabilities.set(caps)
-
-        return video_pb2.SetLinkVideoTesterResponse()
-
-    @log_functionality.logger
-    def GetLinkVideoTester(self, request, context):
-        """Get the current advanced link parameters for a given video tester."""
-
-        self._check_serial_active(request.id)
-        caps = self._role.dprx.link.capabilities.link_caps_status()
-
-        link_info = video_pb2.GetLinkVideoTesterResponse()
-        link_info.mst = caps.mst
-        link_info.mst_sink_count = caps.mst_sink_count
-        link_info.max_lane = caps.max_lane
-        link_info.scrambler_seed = self._role.dprx.link.scrambler_seed
-        link_info.ss_sbm = caps.ss_sbm
-        link_info.fec = caps.fec
-        link_info.tps4 = caps.tps4
-        link_info.tps3 = caps.tps3
-        link_info.dsc = caps.dsc
-
-        return link_info
 
     # Do not log the request as the screenshots can get very big.
     def ScreenshotVideoTester(self, request, context):
@@ -281,12 +217,12 @@ class UnigrafServer(video_pb2_grpc.VideoTesterServiceServicer):
         logging.info("Running ScreenshotVideoTester with args: %s", request)
         self._check_serial_active(request.id)
 
-        self._role.dprx.video_capturer.start(
+        self._port_rx.video_capturer.start(
             frames_count=1,
             stream_number=request.id_stream,
         )
-        self._role.dprx.video_capturer.stop()
-        result = self._role.dprx.video_capturer.capture_result
+        self._port_rx.video_capturer.stop()
+        result = self._port_rx.video_capturer.capture_result
 
         # pylint: disable=R1732
         tmp = tempfile.NamedTemporaryFile(suffix=".bmp")
@@ -311,7 +247,7 @@ class UnigrafServer(video_pb2_grpc.VideoTesterServiceServicer):
 
         res = []
         for i in range(0, stream_num):
-            stream = self._role.dprx.link.status.stream(i)
+            stream = self._port_rx.link.status.stream(i)
             color_format = translate.SDK_COLOR_FORMAT_TO_GRPC[
                 stream.video_mode.color_info.color_format
             ]
@@ -341,44 +277,6 @@ class UnigrafServer(video_pb2_grpc.VideoTesterServiceServicer):
 
         return video_pb2.GetStreamInfoVideoTesterResponse(streams=res)
 
-    @log_functionality.logger
-    def AttachVideoTester(self, request, context):
-        """Simulate attaching or detaching a display or sink on a video tester."""
-        self._check_serial_active(request.id)
-
-        if isinstance(self._role, UniTAP.dev.UCD500.USBCSourceUSBCSink):
-            self._role.pdcrx.controls.attach(request.attach)
-        else:
-            raise RuntimeError(
-                f"Attach operation for role {self._role} is not implemented."
-            )
-
-        return video_pb2.AttachVideoTesterResponse()
-
-    @log_functionality.logger
-    def HpdPulseVideoTester(self, request, context):
-        """Sends an HPD (Hot Plug Detect) pulse to a video tester."""
-        self._check_serial_active(request.id)
-
-        self._role.dprx.link.hpd_pulse()
-
-        return video_pb2.HpdPulseVideoTesterResponse()
-
-    @log_functionality.logger
-    def _get_number_of_video_streams(self):
-        # When using USB-C DPAM, caps.mst_sink_count will not be zero
-        # if we are in a detached state.
-        if isinstance(self._role, UniTAP.dev.UCD500.USBCSourceUSBCSink):
-            dut_dmap = self._role.pdcrx.dp_alt_mode.status.dut_dp_alt_mode
-            dpam_status = dut_dmap.dut_connection
-            if dpam_status == "No connection":
-                return 0
-
-        caps = self._role.dprx.link.capabilities.link_caps_status()
-
-        return caps.mst_sink_count if caps.mst else 1
-
-    @log_functionality.logger
     def _check_serial_active(self, serial):
         if self._serial is None:
             raise RuntimeError(f"Tester {serial} is not open")

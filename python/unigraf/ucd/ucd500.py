@@ -1,0 +1,166 @@
+# Copyright 2025 The ChromiumOS Authors
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+"""Provides a gRPC server to control Unigraf video testing hardware.
+
+This module implements the VideoTesterService gRPC service, allowing clients
+to discover, open, close, and configure Unigraf UCD-500 series video testers
+using the UniTAP library.
+"""
+
+import logging
+import time
+
+# pylint: disable=import-error
+from chromiumos.test.lab.api.passport import (
+    video_tester_service_pb2 as video_pb2,
+)
+from ucd import server
+from ucd import translate
+import UniTAP
+
+from utils import log_functionality
+
+
+# pylint: enable=import-error
+
+
+class Ucd500Server(server.UcdServer):
+    """Implements the gRPC service for controlling Unigraf video testers.
+
+    This class provides methods to discover, open, close, and configure
+    Unigraf UCD-500 series video testing devices. It uses the UniTAP library
+    to interact with the hardware.
+    """
+
+    @log_functionality.logger
+    def __init__(self):
+        super().__init__("UCD-500")
+
+        logging.info("VideoTesterServiceServicer init done")
+
+    @log_functionality.logger
+    def SetRoleVideoTester(self, request, _):
+        """Selects a specific role for a given video tester."""
+
+        if request.id != self._serial:
+            raise RuntimeError(
+                f"Serials dont match, got {request.id} expected {self._serial}"
+            )
+
+        if request.role not in translate.UCD_ROLES:
+            raise RuntimeError(f"Role is unknwon {request.role}")
+
+        self._role = self._dev.select_role(translate.UCD_ROLES[request.role])
+        self._port_rx = self._role.dprx
+        self._port_tx = self._role.dptx
+        self._dev.opf_handler = UniTAP.OpfHandlerInternal(
+            port_tx=self._port_tx,
+            port_rx=self._port_rx,
+        )
+        logging.info("Role was selected successfully.")
+
+        if isinstance(self._role, UniTAP.dev.UCD500.USBCSourceUSBCSink):
+            logging.info("Set USB-PD to UFP.")
+            self._role.pdcrx.capabilities.set_initial_role(
+                UniTAP.pdc.PdcDeviceRole.UFP
+            )
+            self._role.pdcrx.controls.reconnect()
+            time.sleep(5)
+
+        return video_pb2.SetRoleResponse(success=True)
+
+    @log_functionality.logger
+    def SetLinkVideoTester(self, request, context):
+        """Sets advanced link parameters for a given video tester."""
+        self._check_serial_active(request.id)
+        caps = self._role.dprx.link.capabilities.link_caps_status()
+
+        if request.HasField("mst"):
+            caps.mst = request.mst
+
+        if request.HasField("mst_sink_count"):
+            caps.mst_sink_count = request.mst_sink_count
+
+        if request.HasField("max_lane"):
+            caps.max_lane = request.max_lane
+
+        if request.HasField("scrambler_seed"):
+            self._role.dprx.link.scrambler_seed = request.scrambler_seed
+
+        if request.HasField("ss_sbm"):
+            caps.ss_sbm = request.ss_sbm
+
+        if request.HasField("fec"):
+            caps.fec = request.fec
+
+        if request.HasField("tps4"):
+            caps.tps4 = request.tps4
+
+        if request.HasField("tps3"):
+            caps.tps3 = request.tps3
+
+        if request.HasField("dsc"):
+            caps.dsc = request.dsc
+
+        self._role.dprx.link.capabilities.set(caps)
+
+        return video_pb2.SetLinkVideoTesterResponse()
+
+    @log_functionality.logger
+    def GetLinkVideoTester(self, request, context):
+        """Get the current advanced link parameters for a given video tester."""
+
+        self._check_serial_active(request.id)
+        caps = self._role.dprx.link.capabilities.link_caps_status()
+
+        link_info = video_pb2.GetLinkVideoTesterResponse()
+        link_info.mst = caps.mst
+        link_info.mst_sink_count = caps.mst_sink_count
+        link_info.max_lane = caps.max_lane
+        link_info.scrambler_seed = self._role.dprx.link.scrambler_seed
+        link_info.ss_sbm = caps.ss_sbm
+        link_info.fec = caps.fec
+        link_info.tps4 = caps.tps4
+        link_info.tps3 = caps.tps3
+        link_info.dsc = caps.dsc
+
+        return link_info
+
+    @log_functionality.logger
+    def AttachVideoTester(self, request, context):
+        """Simulate attaching or detaching a display or sink on a video tester."""
+        self._check_serial_active(request.id)
+
+        if isinstance(self._role, UniTAP.dev.UCD500.USBCSourceUSBCSink):
+            self._role.pdcrx.controls.attach(request.attach)
+        else:
+            raise RuntimeError(
+                f"Attach operation for role {self._role} is not implemented."
+            )
+
+        return video_pb2.AttachVideoTesterResponse()
+
+    @log_functionality.logger
+    def HpdPulseVideoTester(self, request, context):
+        """Sends an HPD (Hot Plug Detect) pulse to a video tester."""
+        self._check_serial_active(request.id)
+
+        self._port_rx.link.hpd_pulse()
+
+        return video_pb2.HpdPulseVideoTesterResponse()
+
+    @log_functionality.logger
+    def _get_number_of_video_streams(self):
+        # When using USB-C DPAM, caps.mst_sink_count will not be zero
+        # if we are in a detached state.
+        if isinstance(self._role, UniTAP.dev.UCD500.USBCSourceUSBCSink):
+            dut_dmap = self._role.pdcrx.dp_alt_mode.status.dut_dp_alt_mode
+            dpam_status = dut_dmap.dut_connection
+            if dpam_status == "No connection":
+                return 0
+
+        caps = self._port_rx.link.capabilities.link_caps_status()
+
+        return caps.mst_sink_count if caps.mst else 1
