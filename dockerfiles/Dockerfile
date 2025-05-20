@@ -4,6 +4,16 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+FROM --platform=$BUILDPLATFORM debian:bookworm-slim AS usb_build
+
+RUN apt update
+RUN apt install -y build-essential devscripts debhelper
+RUN git clone https://github.com/libusb/libusb.git
+WORKDIR "/libusb/"
+RUN git checkout v1.0.28
+RUN ./autogen.sh --disable-udev
+RUN make
+
 FROM --platform=$BUILDPLATFORM golang:alpine AS build
 
 # Pass apiconfig as an argument to docker buildx
@@ -55,7 +65,10 @@ RUN apt-get update \
   && update-ca-certificates \
   && mkdir -p /opt/unigraf/
 
-COPY --from=unigrafctl_build /usr/local/bin/unigraf/dist/unigrafctl /bin/unigrafctl
+COPY --from=unigrafctl_build /usr/local/bin/unigraf/dist/unigrafctl \
+  /bin/unigrafctl
 COPY --from=build /bin/cros-passport /bin/cros-passport
+COPY --from=usb_build /libusb/libusb/.libs/libusb-1.0.so.0 \
+  /usr/lib/x86_64-linux-gnu/libusb-1.0.so.0
 
 CMD ["/bin/cros-passport"]
