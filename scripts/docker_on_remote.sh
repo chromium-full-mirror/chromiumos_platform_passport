@@ -108,14 +108,19 @@ if [[ -z "${BUILD_FROM_LOCAL}" ]]; then
   fi
   HOST="${HOSTS[0]}"
   set_docker_cmd_path
-  if ! ${SSH_CMD} "${HOST}" "${DOCKER_CMD} exec -i compose sh -c 'cat "${SATLAB_KEY_FILE}" | /usr/local/bin/docker login -u _json_key --password-stdin us-docker.pkg.dev/cros-passport'"; then
-    echo "ERROR: failed to login to docker registry, are you running this script on a satlab?"
+
+  # Try to login using remote keyfile.
+  if ${SSH_CMD} "${HOST}" "${DOCKER_CMD} exec -i compose sh -c 'cat \"${SATLAB_KEY_FILE}\" | /usr/local/bin/docker login -u _json_key --password-stdin us-docker.pkg.dev/cros-passport'"; then
+    echo "Pulling docker image using remote credentials"
+    if ${SSH_CMD} "${HOST}" "${DOCKER_CMD} exec -i compose sh -c '/usr/local/bin/docker pull ${PASSSPORT_DOCKER_IMAGE}'"; then
+      echo "Pulled docker using remote docker"
+    fi
+  # Use local docker credentials by specifying DOCKER_HOST
+  elif ! DOCKER_HOST=ssh://${HOST} docker pull "${PASSSPORT_DOCKER_IMAGE}"; then
+    echo "ERROR: failed to pull latest passport docker image"
     exit 1
   fi
-  if ! ${SSH_CMD} "${HOST}" "${DOCKER_CMD} exec -i compose sh -c '/usr/local/bin/docker pull ${PASSSPORT_DOCKER_IMAGE}'"; then
-    echo "ERROR: failed to pull latest passport docker image"
-    # exit 1
-  fi
+
   stop_passport_service
   start_passport_service
   exit 0
