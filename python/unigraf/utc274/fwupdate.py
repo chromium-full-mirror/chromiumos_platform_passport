@@ -45,19 +45,11 @@ class Utc274FwUpdater:
         self._fw_blob_path = "/opt/unigraf/"
         self._force_fw = force_fw
 
-        self._fw_updater = UTCLibrary.FWUpdate()
-        self._fw_updater.set_fw_folder_path(self._fw_blob_path)
-        logging.info(
-            "Utc274FwUpdater params fwpath:%s force: %s",
-            self._fw_blob_path,
-            self._force_fw,
-        )
-
         url = urllib.parse.urljoin(
             constants.UTC_274_FIRMWARE_BASE_LINK,
             constants.UTC_274_PD_FIRMWARE_VERSION,
         )
-        path = self._fw_blob_path + constants.UTC_274_PD_FIRMWARE_VERSION
+        path = self._fw_blob_path + constants.UTC_274_PD_FIRMWARE_VERSION[7:]
         self._download_firmware(url, path)
         self._check_file_hash(path, constants.UTC_274_PD_FIRMWARE_CHECKSUM)
 
@@ -65,9 +57,17 @@ class Utc274FwUpdater:
             constants.UTC_274_FIRMWARE_BASE_LINK,
             constants.UTC_274_MS_FIRMWARE_VERSION,
         )
-        path = self._fw_blob_path + constants.UTC_274_MS_FIRMWARE_VERSION
+        path = self._fw_blob_path + constants.UTC_274_MS_FIRMWARE_VERSION[7:]
         self._download_firmware(url, path)
         self._check_file_hash(path, constants.UTC_274_MS_FIRMWARE_CHECKSUM)
+
+        self._fw_updater = UTCLibrary.FWUpdate()
+        self._fw_updater.set_fw_folder_path(self._fw_blob_path)
+        logging.info(
+            "Utc274FwUpdater params fwpath:%s force: %s",
+            self._fw_blob_path,
+            self._force_fw,
+        )
 
     def _download_firmware(self, url, path):
         if os.path.exists(path):
@@ -112,20 +112,16 @@ class Utc274FwUpdater:
         logging.info("Selecting device, serial %s", serial)
         self._fw_updater.select_device_to_update(serial_number=serial)
 
-        bundle_pd_version = self._fw_updater.bundle_pd_version()
-        current_pd_version = self._fw_updater.current_pd_version()
         logging.info(
             "PDC FW version, bundle:%s current: %s",
-            bundle_pd_version,
-            current_pd_version,
+            self._fw_updater.bundle_pd_version(),
+            self._fw_updater.current_pd_version(),
         )
 
-        bundle_ms_version = self._fw_updater.bundle_ms_version()
-        current_ms_version = self._fw_updater.current_ms_version()
         logging.info(
             "MS FW version, bundle: %s current:%s",
-            bundle_ms_version,
-            current_ms_version,
+            self._fw_updater.bundle_ms_version(),
+            self._fw_updater.current_ms_version(),
         )
 
         # Select target device to update only if force or the update is needed

@@ -10,6 +10,7 @@ hardware operations such as cable replugging, hard resets, and EDID loading.
 """
 
 import logging
+import operator
 import tempfile
 import threading
 
@@ -111,8 +112,8 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
         with self._serial_locks[serial]:
             dev = self._open_devices[serial]
             try:
-                get_f = getattr(dev.pd, self.SDK_F_MAP[attr][0])
-                update_f = getattr(dev.pd, self.SDK_F_MAP[attr][1])
+                get_f = operator.attrgetter(self.SDK_F_MAP[attr][0])(dev)
+                update_f = operator.attrgetter(self.SDK_F_MAP[attr][1])(dev)
             except Exception as e:
                 logging.error(
                     "An error occurred during device reflection: %s", str(e)
@@ -138,8 +139,8 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
         with self._serial_locks[serial]:
             dev = self._open_devices[serial]
             try:
-                set_f = getattr(dev.pd, self.SDK_F_MAP[attr][2])
-                update_f = getattr(dev.pd, self.SDK_F_MAP[attr][1])
+                set_f = operator.attrgetter(self.SDK_F_MAP[attr][2])(dev)
+                update_f = operator.attrgetter(self.SDK_F_MAP[attr][1])(dev)
             except Exception as e:
                 logging.error(
                     "An error occurred during device reflection: %s", str(e)
