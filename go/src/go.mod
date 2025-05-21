@@ -11,6 +11,7 @@ replace (
 
 require (
 	github.com/blackjack/webcam v0.6.1
+	github.com/google/go-cmp v0.7.0
 	github.com/spf13/cobra v1.9.1
 	go.bug.st/serial v1.6.2
 	go.chromium.org/chromiumos/config/go v0.0.0
