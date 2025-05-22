@@ -26,6 +26,7 @@ func Capture() *cobra.Command {
 type captureCmd struct {
 	portArg int
 	cameras []string
+	analyze bool
 }
 
 func (c *captureCmd) run(cmd *cobra.Command, args []string) error {
@@ -49,19 +50,38 @@ func (c *captureCmd) run(cmd *cobra.Command, args []string) error {
 		}
 	}
 	slog.Info("Capturing image for cameras", "cameras", c.cameras)
-
 	for _, camera_id := range c.cameras {
-		req := &passport.GetAveragePixelRequest{
-			DeviceId: camera_id,
+		frame := []byte{}
+		if c.analyze {
+			req := &passport.AnalyzeHSVRequest{
+				DeviceId: camera_id,
+				Masks: map[string]*passport.HSVMask{
+					"Red":   &passport.HSVMask{Min: &passport.HSV{Hue: 340, Saturation: 0.5, Value: 0.55}, Max: &passport.HSV{Hue: 20, Saturation: 1.0, Value: 1.0}},
+					"Green": &passport.HSVMask{Min: &passport.HSV{Hue: 95, Saturation: 0.5, Value: 0.55}, Max: &passport.HSV{Hue: 165, Saturation: 1.0, Value: 1.0}},
+					"Blue":  &passport.HSVMask{Min: &passport.HSV{Hue: 220, Saturation: 0.5, Value: 0.55}, Max: &passport.HSV{Hue: 260, Saturation: 1.0, Value: 1.0}},
+					"Off":   &passport.HSVMask{Min: &passport.HSV{Hue: 0, Saturation: 0.0, Value: 0.0}, Max: &passport.HSV{Hue: 360, Saturation: 0.4, Value: 0.6}},
+				},
+			}
+			resp, err := client.AnalyzeImageHSV(cmd.Context(), req)
+			if err != nil {
+				return fmt.Errorf("failed to capture image for camera: %s: %w", camera_id, err)
+			}
+			slog.Info("HSV analysis value", "percentage matched", resp.GetPercentageMatched())
+			frame = resp.GetFrame()
+		} else {
+			req := &passport.GetAveragePixelRequest{
+				DeviceId: camera_id,
+			}
+			resp, err := client.GetAveragePixel(cmd.Context(), req)
+			if err != nil {
+				return fmt.Errorf("failed to capture iamge for camera: %s: %w", camera_id, err)
+			}
+			slog.Info("average pixel value", "pixel", resp.GetPixel())
+			frame = resp.GetFrame()
 		}
-		resp, err := client.GetAveragePixel(cmd.Context(), req)
-		if err != nil {
-			return fmt.Errorf("failed to capture iamge for camera: %s: %w", camera_id, err)
-		}
-		slog.Info("average pixel value", "pixel", resp.GetPixel())
 		timestamp := time.Now().Format("20060102_150405")
 		outfile := fmt.Sprintf("%s_%s.jpg", strings.ReplaceAll(camera_id, "/", "_"), timestamp)
-		err = os.WriteFile(outfile, resp.GetFrame(), 0644)
+		err = os.WriteFile(outfile, frame, 0644)
 		if err != nil {
 			return fmt.Errorf("could not write image to %s: %w", outfile, err)
 		}
@@ -83,6 +103,9 @@ func (c *captureCmd) Cmd() *cobra.Command {
 
 	cmd.Flags().StringArrayVar(
 		&c.cameras, "cameras", []string{}, "A list of cameras to capture iamges from or leave empty to capture on all.")
+
+	cmd.Flags().BoolVar(
+		&c.analyze, "analyze", false, "Whether to analyze the image for HSV ranges.")
 
 	return cmd
 }

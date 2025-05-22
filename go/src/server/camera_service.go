@@ -58,6 +58,20 @@ func (s *cameraServiceServer) GetAveragePixel(ctx context.Context, req *passport
 	return resp, nil
 }
 
+func (s *cameraServiceServer) AnalyzeImageHSV(ctx context.Context, req *passport.AnalyzeHSVRequest) (*passport.AnalyzeHSVResponse, error) {
+	slog.Info("Received passport.AnalyzeHSVRequest", "req", req)
+	c, err := s.pluginForCamera(ctx, req.GetDeviceId())
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch plugin for camera: %w", err)
+	}
+
+	resp, err := c.AnalyzeImageHSV(ctx, req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to analyze image HSV for camera: %q: %w", req.GetDeviceId(), err)
+	}
+	return resp, nil
+}
+
 // pluginForCamera gets the plugin that controls a specific camera.
 func (s *cameraServiceServer) pluginForCamera(ctx context.Context, id string) (CameraPlugin, error) {
 	if c, ok := s.cameraMap[id]; ok {

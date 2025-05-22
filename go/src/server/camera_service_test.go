@@ -14,11 +14,13 @@ import (
 
 type getCamerasFunc func(ctx context.Context, req *passport.GetCamerasRequest) (*passport.GetCamerasResponse, error)
 type getAvgPixelFunc func(ctx context.Context, req *passport.GetAveragePixelRequest) (*passport.GetAveragePixelResponse, error)
+type analyzeImageHSVFunc func(ctx context.Context, req *passport.AnalyzeHSVRequest) (*passport.AnalyzeHSVResponse, error)
 
 // mockCameraPlugin is mock camera plugin.
 type mockCameraPlugin struct {
-	getCameras  getCamerasFunc
-	getAvgPixel getAvgPixelFunc
+	getCameras      getCamerasFunc
+	getAvgPixel     getAvgPixelFunc
+	analyzeImageHSV analyzeImageHSVFunc
 }
 
 func (m *mockCameraPlugin) GetCameras(ctx context.Context, req *passport.GetCamerasRequest) (*passport.GetCamerasResponse, error) {
@@ -33,6 +35,13 @@ func (m *mockCameraPlugin) GetAveragePixel(ctx context.Context, req *passport.Ge
 		return m.getAvgPixel(ctx, req)
 	}
 	return &passport.GetAveragePixelResponse{}, nil
+}
+
+func (m *mockCameraPlugin) AnalyzeImageHSV(ctx context.Context, req *passport.AnalyzeHSVRequest) (*passport.AnalyzeHSVResponse, error) {
+	if m.analyzeImageHSV != nil {
+		return m.analyzeImageHSV(ctx, req)
+	}
+	return &passport.AnalyzeHSVResponse{}, nil
 }
 
 func (m *mockCameraPlugin) Name() string {
@@ -214,6 +223,79 @@ func TestGetAveragePixel(t *testing.T) {
 				plugins:   test.plugins,
 			}
 			_, err := service.GetAveragePixel(context.Background(), test.request)
+			if (err != nil) != test.wantErr {
+				t.Errorf("error = %v, wantErr %v", err, test.wantErr)
+			}
+		})
+	}
+}
+
+func TestAnalyzeImageHSV(t *testing.T) {
+	tests := []struct {
+		name    string
+		plugins []CameraPlugin
+		request *passport.AnalyzeHSVRequest
+		wantErr bool
+	}{
+		{
+			name: "Empty",
+			request: &passport.AnalyzeHSVRequest{
+				DeviceId: "camera4",
+			},
+			wantErr: true,
+		},
+		{
+			name: "HappyPath",
+			plugins: []CameraPlugin{
+				&mockCameraPlugin{
+					getCameras: replyWithCameras("camera1", "camera2", "camera3"),
+				},
+				&mockCameraPlugin{
+					getCameras: replyWithCameras("camera4"),
+				},
+				&mockCameraPlugin{
+					getCameras: replyWithCameras("camera5"),
+				},
+				&mockCameraPlugin{},
+			},
+			request: &passport.AnalyzeHSVRequest{
+				DeviceId: "camera4",
+			},
+		},
+		{
+			name: "UnknownCamera",
+			plugins: []CameraPlugin{
+				&mockCameraPlugin{
+					getCameras: replyWithCameras("camera1", "camera2", "camera3"),
+				},
+			},
+			request: &passport.AnalyzeHSVRequest{
+				DeviceId: "camera4",
+			},
+			wantErr: true,
+		},
+		{
+			name: "PluginError",
+			plugins: []CameraPlugin{
+				&mockCameraPlugin{
+					getCameras: replyWithCameras("camera1"),
+				},
+				&mockCameraPlugin{
+					analyzeImageHSV: func(context.Context, *passport.AnalyzeHSVRequest) (*passport.AnalyzeHSVResponse, error) {
+						return nil, fmt.Errorf("Test Error")
+					},
+				},
+			},
+			wantErr: true,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			service := &cameraServiceServer{
+				cameraMap: make(map[string]CameraPlugin),
+				plugins:   test.plugins,
+			}
+			_, err := service.AnalyzeImageHSV(context.Background(), test.request)
 			if (err != nil) != test.wantErr {
 				t.Errorf("error = %v, wantErr %v", err, test.wantErr)
 			}

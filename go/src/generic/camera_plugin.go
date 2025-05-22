@@ -105,9 +105,65 @@ func (s *cameraPlugin) GetCameras(ctx context.Context, req *passport.GetCamerasR
 
 // GetAveragePixel gets the average pixel color detected by the specified camera.
 func (s *cameraPlugin) GetAveragePixel(ctx context.Context, req *passport.GetAveragePixelRequest) (*passport.GetAveragePixelResponse, error) {
+	frame, err := captureFrame(ctx, req.GetDeviceId())
+	if err != nil {
+		return nil, fmt.Errorf("cannot get average pixel, failed to capture frame: %w", err)
+	}
+	p, err := getAvgPixelColor(frame)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get pixel from webcam: %q: %w", req.GetDeviceId(), err)
+	}
+
+	return &passport.GetAveragePixelResponse{
+		Pixel: p,
+		Frame: frame,
+	}, nil
+}
+
+// AnalyzeImageHSV gets the average pixel color detected by the specified camera.
+func (s *cameraPlugin) AnalyzeImageHSV(ctx context.Context, req *passport.AnalyzeHSVRequest) (*passport.AnalyzeHSVResponse, error) {
+	frame, err := captureFrame(ctx, req.GetDeviceId())
+	if err != nil {
+		return nil, fmt.Errorf("cannot analyze image HSV, failed to capture frame: %w", err)
+	}
+
+	// convert req to a map of hsv ranges
+	hsvRanges := make(map[string]HSVRange)
+	for color, mask := range req.GetMasks() {
+		hsvRanges[color] = HSVRange{
+			Min: HSV{
+				H: float64(mask.GetMin().GetHue()),
+				S: float64(mask.GetMin().GetSaturation()),
+				V: float64(mask.GetMin().GetValue()),
+			},
+			Max: HSV{
+				H: float64(mask.GetMax().GetHue()),
+				S: float64(mask.GetMax().GetSaturation()),
+				V: float64(mask.GetMax().GetValue()),
+			},
+		}
+	}
+
+	percentageMatched, err := GetPercentageInBounds(frame, hsvRanges)
+	if err != nil {
+		return nil, fmt.Errorf("cannot analyze image HSV, failed to get percentage in bounds: %w", err)
+	}
+
+	// convert to float32
+	percentageMatchedFloat := make(map[string]float32)
+	for color, percentage := range percentageMatched {
+		percentageMatchedFloat[color] = float32(percentage)
+	}
+	// return the response
+	return &passport.AnalyzeHSVResponse{
+		Frame:             frame,
+		PercentageMatched: percentageMatchedFloat,
+	}, nil
+}
+
+func captureFrame(ctx context.Context, devPort string) ([]byte, error) {
 	const settlingTime = 10
 
-	devPort := req.GetDeviceId()
 	slog.Info("Getting average pixel", "port", devPort)
 
 	cam, err := webcam.Open(devPort)
@@ -153,15 +209,7 @@ func (s *cameraPlugin) GetAveragePixel(ctx context.Context, req *passport.GetAve
 		if err != nil {
 			return nil, fmt.Errorf("failed to add DHT to the frame %w", err)
 		}
-		p, err := getAvgPixelColor(frame)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get pixel from webcam: %q: %w", devPort, err)
-		}
-
-		return &passport.GetAveragePixelResponse{
-			Pixel: p,
-			Frame: frame,
-		}, nil
+		return frame, nil
 	}
 	return nil, fmt.Errorf("failed to capture a frame before context expired")
 }
