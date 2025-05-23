@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"go.chromiumos.org/chromiumos/platform/passport/cmd/cameras"
+	"go.chromiumos.org/chromiumos/platform/passport/cmd/hid"
 	"go.chromiumos.org/chromiumos/platform/passport/cmd/switches"
 	"go.chromiumos.org/chromiumos/platform/passport/server"
 )
@@ -51,6 +52,7 @@ func (r *rootCmd) Cmd() (*cobra.Command, error) {
 	cmd.AddCommand(
 		switches.RootCmd(),
 		cameras.RootCmd(),
+		hid.RootCmd(),
 	)
 
 	return cmd, nil

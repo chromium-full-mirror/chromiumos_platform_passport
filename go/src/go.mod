@@ -19,6 +19,7 @@ require (
 	go.chromium.org/chromiumos/test v0.0.0
 	go.chromium.org/infra v0.0.0-20250530091808-1d369755a219
 	google.golang.org/grpc v1.72.2
+	google.golang.org/protobuf v1.36.6
 )
 
 require (
@@ -29,5 +30,4 @@ require (
 	golang.org/x/sys v0.32.0 // indirect
 	golang.org/x/text v0.24.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20250425173222-7b384671a197 // indirect
-	google.golang.org/protobuf v1.36.6 // indirect
 )
