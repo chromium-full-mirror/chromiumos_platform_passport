@@ -241,6 +241,21 @@ class UnigrafServer(video_pb2_grpc.VideoTesterServiceServicer):
         if request.HasField("scrambler_seed"):
             self._role.dprx.link.scrambler_seed = request.scrambler_seed
 
+        if request.HasField("ss_sbm"):
+            caps.ss_sbm = request.ss_sbm
+
+        if request.HasField("fec"):
+            caps.fec = request.fec
+
+        if request.HasField("tps4"):
+            caps.tps4 = request.tps4
+
+        if request.HasField("tps3"):
+            caps.tps3 = request.tps3
+
+        if request.HasField("dsc"):
+            caps.dsc = request.dsc
+
         self._role.dprx.link.capabilities.set(caps)
 
         return video_pb2.SetLinkVideoTesterResponse()
@@ -257,6 +272,11 @@ class UnigrafServer(video_pb2_grpc.VideoTesterServiceServicer):
         link_info.mst_sink_count = caps.mst_sink_count
         link_info.max_lane = caps.max_lane
         link_info.scrambler_seed = self._role.dprx.link.scrambler_seed
+        link_info.ss_sbm = caps.ss_sbm
+        link_info.fec = caps.fec
+        link_info.tps4 = caps.tps4
+        link_info.tps3 = caps.tps3
+        link_info.dsc = caps.dsc
 
         return link_info
 
