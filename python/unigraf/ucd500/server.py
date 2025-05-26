@@ -225,15 +225,9 @@ class UnigrafServer(video_pb2_grpc.VideoTesterServiceServicer):
 
         if request.HasField("mst"):
             caps.mst = request.mst
-            if (
-                request.HasField("mst_sink_count")
-                and request.mst_sink_count != 0
-            ):
-                if request.mst is False:
-                    raise RuntimeError(
-                        "Mst is disabled but sink count was provided"
-                    )
-                caps.mst_sink_count = request.mst_sink_count
+
+        if request.HasField("mst_sink_count"):
+            caps.mst_sink_count = request.mst_sink_count
 
         if request.HasField("max_lane"):
             caps.max_lane = request.max_lane
