@@ -146,6 +146,11 @@ SDK_F_MAP = {
         "hw.update_dp_alt_mode_cap",
         "hw.select_dp_alt_mode_cap",
     ],
+    usb_tester_service_pb2.USB_PATH: [
+        "hw.usb_path",
+        "hw.update_usb_path",
+        "hw.select_usb_path",
+    ],
 }
 
 CAPABILITY_RETURN_FIELD_MAP = {
@@ -175,6 +180,7 @@ CAPABILITY_RETURN_FIELD_MAP = {
     usb_tester_service_pb2.CONSTRAINED_POWER: "constrained_power",
     usb_tester_service_pb2.POWER_DELIVERY: "power_delivery",
     usb_tester_service_pb2.DISPLAY_PORT_AM: "display_port_am",
+    usb_tester_service_pb2.USB_PATH: "usb_path",
 }
 
 DISCRETE_CAPABILITIES = [
@@ -193,6 +199,7 @@ DISCRETE_CAPABILITIES = [
     usb_tester_service_pb2.CONSTRAINED_POWER,
     usb_tester_service_pb2.POWER_DELIVERY,
     usb_tester_service_pb2.DISPLAY_PORT_AM,
+    usb_tester_service_pb2.USB_PATH,
 ]
 
 NON_DISCRETE_CAPABILITIES = [
@@ -244,6 +251,14 @@ GRCP_CAPABILITY_SDK_VALUE_MAP_GRCP_VALUE = {
     (usb_tester_service_pb2.POWER_DELIVERY, 0): False,
     (usb_tester_service_pb2.DISPLAY_PORT_AM, 1): True,
     (usb_tester_service_pb2.DISPLAY_PORT_AM, 0): False,
+    (
+        usb_tester_service_pb2.USB_PATH,
+        0,
+    ): usb_tester_service_pb2.USB_PATH_INTERNAL,
+    (
+        usb_tester_service_pb2.USB_PATH,
+        1,
+    ): usb_tester_service_pb2.USB_PATH_EXTERNAL,
 }
 
 # The values in this map are taken from the user manual,
@@ -279,6 +294,14 @@ GRCP_CAPABILITY_VALUE_MAP_SDK_VALUE = {
     (usb_tester_service_pb2.POWER_DELIVERY, False): 0,
     (usb_tester_service_pb2.DISPLAY_PORT_AM, True): 1,
     (usb_tester_service_pb2.DISPLAY_PORT_AM, False): 0,
+    (
+        usb_tester_service_pb2.USB_PATH,
+        usb_tester_service_pb2.USB_PATH_INTERNAL,
+    ): 0,
+    (
+        usb_tester_service_pb2.USB_PATH,
+        usb_tester_service_pb2.USB_PATH_EXTERNAL,
+    ): 1,
 }
 
 
