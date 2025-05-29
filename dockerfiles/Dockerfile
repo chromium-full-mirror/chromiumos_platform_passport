@@ -30,7 +30,7 @@ FROM --platform=$BUILDPLATFORM debian:bookworm-slim AS unigrafctl_build
 
 # Prepare python the enviroment.
 RUN apt-get update \
-    && apt-get install -y python3-venv libusb-1.0-0-dev wget \
+    && apt-get install -y python3-venv wget libusb-1.0-0-dev \
     && mkdir -p /usr/local/bin/unigraf \
     && mkdir -p /usr/local/bin/unigraf/chromiumos_apis \
     && python3 -m venv /usr/local/bin/unigraf/venv \
@@ -50,11 +50,20 @@ ARG UCD500_SDK_VERSION=3.5.284.12136
 RUN wget https://storage.googleapis.com/chromeos-localmirror/distfiles/UTCLibrary-${UTC274_SDK_VERSION}.tar.gz \
     && wget https://storage.googleapis.com/chromeos-localmirror/distfiles/UniTAP-${UCD500_SDK_VERSION}.tar.gz \
     && venv/bin/pip install --require-hashes -r unigraf/requirements.txt \
-    && venv/bin/pip install --no-deps --no-index chromiumos_apis/ \
-    && venv/bin/pyinstaller \
+    && venv/bin/pip install --no-deps --no-index chromiumos_apis/
+
+RUN venv/bin/pyinstaller \
+    --collect-all UniTAP \
+    --name testervideoctl \
+    --onefile unigraf/__main__.py
+
+# Libusb is bundled and loaded by pyinstaller, the SDK load call is irrelevant.
+COPY --from=usb_build /libusb/libusb/.libs/libusb-1.0.so.0 \
+  /usr/lib/x86_64-linux-gnu/libusb-1.0.so.0
+
+RUN venv/bin/pyinstaller \
       --collect-all UTCLibrary \
-      --collect-all UniTAP \
-      --name unigrafctl \
+      --name testerusbctl \
       --onefile unigraf/__main__.py
 
 # Final assembly.
@@ -65,10 +74,12 @@ RUN apt-get update \
   && update-ca-certificates \
   && mkdir -p /opt/unigraf/
 
-COPY --from=unigrafctl_build /usr/local/bin/unigraf/dist/unigrafctl \
-  /bin/unigrafctl
+COPY --from=unigrafctl_build /usr/local/bin/unigraf/dist/testervideoctl \
+  /bin/testervideoctl
+
+COPY --from=unigrafctl_build /usr/local/bin/unigraf/dist/testerusbctl \
+  /bin/testerusbctl
+
 COPY --from=build /bin/cros-passport /bin/cros-passport
-COPY --from=usb_build /libusb/libusb/.libs/libusb-1.0.so.0 \
-  /usr/lib/x86_64-linux-gnu/libusb-1.0.so.0
 
 CMD ["/bin/cros-passport"]

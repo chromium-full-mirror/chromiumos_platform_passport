@@ -25,7 +25,7 @@ type usbTesterPlugin struct {
 }
 
 const (
-	UNIGRAF_APP_PATH = "/bin/unigrafctl"
+	UNIGRAF_APP_PATH = "/bin/testerusbctl"
 	UNIGRAF_APP_ADDR = "localhost"
 	UNIGRAF_APP_PORT = 8081
 )

@@ -340,13 +340,39 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
         with self._serial_locks[serial]:
             dev = self._open_devices[serial]
 
-            ret = dev.pd.hard_reset()
+            ret = dev.sys_reboot()
 
         return usb_tester_service_pb2.HardResetTesterReply(
             err_code=ret,
             error_msg=(
                 "" if ret == 0 else "failed to do hard reset in the SDK"
             ),
+        )
+
+    def ResetPd(self, request, context):
+        """This method is used to issue power delivery resets."""
+        serial = request.id
+
+        if serial not in self._open_devices:
+            logging.error("Invalid serial %s when taking device", serial)
+            raise ValueError(f"No device with serial {serial}")
+
+        if serial not in self._serial_locks:
+            logging.error("Invalid serial %s when taking lock", serial)
+            raise ValueError(f"No device lock with serial {serial}")
+
+        ret = 0
+        with self._serial_locks[serial]:
+            dev = self._open_devices[serial]
+
+            if request.soft:
+                ret = dev.pd.soft_reset()
+            else:
+                ret = dev.pd.hard_reset()
+
+        return usb_tester_service_pb2.HardResetTesterReply(
+            err_code=ret,
+            error_msg=("" if ret == 0 else "failed to do PD reset in the SDK"),
         )
 
     @log_functionality.logger

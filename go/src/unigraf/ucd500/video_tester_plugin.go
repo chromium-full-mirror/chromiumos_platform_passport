@@ -29,7 +29,7 @@ type videoTesterPlugin struct {
 // Constants for the path, address, and port of the external Unigraf control application.
 const (
 	// UNIGRAF_APP_PATH is the file path to the Unigraf control application executable.
-	UNIGRAF_APP_PATH = "/bin/unigrafctl"
+	UNIGRAF_APP_PATH = "/bin/testervideoctl"
 	// UNIGRAF_APP_ADDR is the network address where the Unigraf control application listens.
 	UNIGRAF_APP_ADDR = "localhost"
 	// UNIGRAF_APP_PORT is the network port where the Unigraf control application listens.
