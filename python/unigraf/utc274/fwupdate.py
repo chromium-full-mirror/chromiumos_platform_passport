@@ -41,25 +41,13 @@ class Utc274FwUpdater:
     """
 
     @log_functionality.logger
-    def __init__(self, force_fw):
+    def __init__(self, force_fw, fw_version):
         self._fw_blob_path = "/opt/unigraf/"
         self._force_fw = force_fw
+        self._fw_version = fw_version
 
-        url = urllib.parse.urljoin(
-            constants.UTC_274_FIRMWARE_BASE_LINK,
-            constants.UTC_274_PD_FIRMWARE_VERSION,
-        )
-        path = self._fw_blob_path + constants.UTC_274_PD_FIRMWARE_VERSION[7:]
-        self._download_firmware(url, path)
-        self._check_file_hash(path, constants.UTC_274_PD_FIRMWARE_CHECKSUM)
-
-        url = urllib.parse.urljoin(
-            constants.UTC_274_FIRMWARE_BASE_LINK,
-            constants.UTC_274_MS_FIRMWARE_VERSION,
-        )
-        path = self._fw_blob_path + constants.UTC_274_MS_FIRMWARE_VERSION[7:]
-        self._download_firmware(url, path)
-        self._check_file_hash(path, constants.UTC_274_MS_FIRMWARE_CHECKSUM)
+        self._download_component_fw("pd")
+        self._download_component_fw("ms")
 
         self._fw_updater = UTCLibrary.FWUpdate()
         self._fw_updater.set_fw_folder_path(self._fw_blob_path)
@@ -68,6 +56,19 @@ class Utc274FwUpdater:
             self._fw_blob_path,
             self._force_fw,
         )
+
+    def _download_component_fw(self, component):
+        fw_name = constants.UTC_274_FW[self._fw_version][component]["name"]
+        fw_checksum = constants.UTC_274_FW[self._fw_version][component][
+            "checksum"
+        ]
+        fw_url = urllib.parse.urljoin(
+            constants.UTC_274_FIRMWARE_BASE_LINK,
+            fw_name,
+        )
+        path = self._fw_blob_path + fw_name.removeprefix("utc274_")
+        self._download_firmware(fw_url, path)
+        self._check_file_hash(path, fw_checksum)
 
     def _download_firmware(self, url, path):
         if os.path.exists(path):

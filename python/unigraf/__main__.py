@@ -16,6 +16,7 @@ the server.
 import argparse
 from concurrent import futures
 import logging
+import sys
 
 # pylint: disable=import-error
 from chromiumos.test.lab.api.passport import usb_tester_service_pb2_grpc
@@ -26,6 +27,7 @@ from ucd import ucd500
 from utc274 import fwupdate as utc274fwup
 from utc274 import server as utc274ctl
 
+from utils import constants
 from utils import log_functionality
 
 
@@ -65,16 +67,20 @@ def serve(port, device_type):
 
 
 @log_functionality.logger
-def fwupdate(device_type, fw_update, force_update, device_serial):
+def fwupdate(device_type, fw_update, force_update, device_serial, fw_version):
     logging.info("Check for FW updates")
     if device_type in ["ALL", "UTC274"] and fw_update:
         logging.info("The UTC-274s will be updated.")
 
-        fwup = utc274fwup.Utc274FwUpdater(force_update)
+        fwup = utc274fwup.Utc274FwUpdater(force_update, fw_version)
         if device_serial != "":
             fwup.update_device(device_serial)
         else:
             fwup.update_all_devices()
+
+    if fw_update:
+        logging.info("FW updated, terminating")
+        sys.exit()
 
 
 if __name__ == "__main__":
@@ -115,6 +121,12 @@ if __name__ == "__main__":
         "will be updated. The class is specified with the --device argument.",
     )
     parser.add_argument(
+        "--fw-version",
+        default=constants.UTC_274_LATEST_FW,
+        choices=list(constants.UTC_274_FW.keys()),
+        help="Optional to specify the FW version",
+    )
+    parser.add_argument(
         "--force-update",
         default=False,
         action="store_true",
@@ -130,6 +142,12 @@ if __name__ == "__main__":
     args = parser.parse_args()
     log_functionality.configure_logging(args.log_path, args.log_level)
 
-    fwupdate(args.device, args.fwupdate, args.force_update, args.device_serial)
+    fwupdate(
+        args.device,
+        args.fwupdate,
+        args.force_update,
+        args.device_serial,
+        args.fw_version,
+    )
 
     serve(args.port, args.device)
