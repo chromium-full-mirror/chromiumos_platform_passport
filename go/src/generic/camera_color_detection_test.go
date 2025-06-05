@@ -183,9 +183,9 @@ func realTestImages(t *testing.T) []testImage {
 
 var hsvRanges = map[string]HSVRange{
 	// red can be on either end of the hue range so split into two ranges.
-	"Red":   HSVRange{Min: HSV{H: 340, S: 0.5, V: 0.55}, Max: HSV{H: 20, S: 1.0, V: 1.0}},
-	"Green": HSVRange{Min: HSV{H: 95, S: 0.5, V: 0.55}, Max: HSV{H: 165, S: 1.0, V: 1.0}},
-	"Blue":  HSVRange{Min: HSV{H: 220, S: 0.5, V: 0.55}, Max: HSV{H: 260, S: 1.0, V: 1.0}},
+	"Red":   HSVRange{Min: HSV{H: 330, S: 0.5, V: 0.55}, Max: HSV{H: 30, S: 1.0, V: 1.0}},
+	"Green": HSVRange{Min: HSV{H: 90, S: 0.5, V: 0.55}, Max: HSV{H: 165, S: 1.0, V: 1.0}},
+	"Blue":  HSVRange{Min: HSV{H: 210, S: 0.5, V: 0.55}, Max: HSV{H: 270, S: 1.0, V: 1.0}},
 	// Off we are just looking at saturation and value.
 	"Off": HSVRange{Min: HSV{H: 0, S: 0.0, V: 0.0}, Max: HSV{H: 360, S: 0.40, V: 0.60}},
 }
