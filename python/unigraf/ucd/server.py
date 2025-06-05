@@ -277,6 +277,18 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
 
         return video_pb2.GetStreamInfoVideoTesterResponse(streams=res)
 
+    def GetRolesVideoTester(self, request, _):
+        """Gets the list of supported roles."""
+
+        self._check_serial_active(request.id)
+
+        inv_role_map = {v: k for k, v in translate.UCD_ROLES.items()}
+        ret = []
+        for role in self._dev.available_roles:
+            ret.append(inv_role_map[role])
+
+        return video_pb2.GetRolesResponse(roles=ret)
+
     def _check_serial_active(self, serial):
         if self._serial is None:
             raise RuntimeError(f"Tester {serial} is not open")
