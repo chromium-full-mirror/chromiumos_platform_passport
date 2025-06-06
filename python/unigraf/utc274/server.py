@@ -57,6 +57,9 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
         testers = []
         for device in self._raw_device:
             # Raw device list has the type: (printable_name, locked, serial)
+            if "UTC-274" not in device[0]:
+                continue
+
             testers.append(
                 usb_tester_service_pb2.UsbTester(id=device[2], name="UTC-274")
             )
