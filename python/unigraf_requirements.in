@@ -1,5 +1,4 @@
 altgraph==0.17.4
-futures==3.0.5
 grpcio==1.69.0
 packaging==24.2
 protobuf==3.19.0

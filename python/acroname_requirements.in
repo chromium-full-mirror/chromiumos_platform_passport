@@ -1,0 +1,6 @@
+brainstem==2.11.1
+grpcio==1.69.0
+packaging==24.2
+protobuf==3.19.0
+pyinstaller==6.12.0
+pyinstaller-hooks-contrib==2025.1
