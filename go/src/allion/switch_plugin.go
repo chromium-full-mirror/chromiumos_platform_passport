@@ -67,6 +67,7 @@ type switchInfo struct {
 	model                string
 	commands             commandMap
 	enableByPortCommands portCommandMap
+	lastCommand          string
 }
 
 // switchPlugin is an allion switch plugin.
@@ -172,6 +173,12 @@ func (s *switchPlugin) refreshSwitches(ctx context.Context) error {
 
 			info.port = port
 			slog.Info("Found valid device", "device", line, "port", info.port, "uid", info.uid)
+
+			if infoOld, ok := s.switches[info.uid]; ok {
+				// if we've previously seen this switch, then reuse some info.
+				info.lastCommand = infoOld.lastCommand
+			}
+
 			switches[info.uid] = info
 			break
 		}
@@ -208,10 +215,19 @@ func (s *switchPlugin) controlSwitch(ctx context.Context, id string, state passp
 		}
 	}
 
+	slog.Info("previous switch command", "switch", id, "command", sw.lastCommand)
+	if sw.lastCommand == cmd {
+		slog.Info("requested switch state matches previous, skipping", "switch", id, "command", cmd)
+		return nil
+	}
+	// Clear last command for now so if there's an error anywhere we're not left in an incorrect state.
+	sw.lastCommand = ""
+
 	slog.Info("Setting switch state", "switch id", id, "state", state, "port id", portId, "switch port", sw.port, "cmd", cmd)
 	if _, err := sendDataToSerialPort(ctx, sw.port, cmd, 3*time.Second); err != nil {
 		return fmt.Errorf("failed to request serial port: %w", err)
 	}
+	sw.lastCommand = cmd
 
 	return nil
 }
