@@ -28,6 +28,12 @@ func newSwitchServiceServer(ctx context.Context) (passport.SwitchServiceServer, 
 		plugins:   switchPlugins,
 	}
 
+	for _, plugin := range s.plugins {
+		if err := plugin.Init(ctx); err != nil {
+			return nil, fmt.Errorf("failed to initialize plugin: %q: %w", plugin.Name(), err)
+		}
+	}
+
 	return s, nil
 }
 

@@ -87,6 +87,12 @@ func init() {
 		})
 }
 
+// Init initializes the plugin.
+func (s *switchPlugin) Init(ctx context.Context) error {
+	// Nothing to do here.
+	return nil
+}
+
 // GetSwitches probes all allion switches connected to the host.
 func (s *switchPlugin) GetSwitches(ctx context.Context, req *passport.GetSwitchesRequest) (*passport.GetSwitchesResponse, error) {
 	slog.Info("Probing for switches")

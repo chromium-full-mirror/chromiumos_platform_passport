@@ -24,8 +24,13 @@ var (
 type SwitchPlugin interface {
 	// Name returns the plugin's name for logging purposes.
 	Name() string
+
 	UpdateIgnoredPorts(ports []string)
 	GetUsedPorts() []string
+
+	// Initializes plugin.
+	Init(context.Context) error
+
 	// Inherit service interface for plugins.
 	passport.SwitchServiceServer
 }

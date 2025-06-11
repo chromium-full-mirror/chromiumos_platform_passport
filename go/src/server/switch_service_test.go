@@ -25,6 +25,10 @@ type mockSwitchPlugin struct {
 	resetAllSwitches    resetAllSwitchesFunc
 }
 
+func (s *mockSwitchPlugin) Init(ctx context.Context) error {
+	return nil
+}
+
 func (s *mockSwitchPlugin) GetSwitches(ctx context.Context, req *passport.GetSwitchesRequest) (*passport.GetSwitchesResponse, error) {
 	if s.getSwitches != nil {
 		return s.getSwitches(ctx, req)
