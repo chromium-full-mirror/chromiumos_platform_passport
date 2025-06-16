@@ -75,7 +75,9 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
         serial = request.id
 
         if serial in self._serial_locks or serial in self._open_devices:
-            raise ProcessLookupError(f"Serial ${serial} is already open.")
+            logging.info("Device serials locks are: %s", self._serial_locks)
+            logging.info("Open devices are: %s", self._open_devices)
+            raise ProcessLookupError(f"Serial {serial} is already open.")
 
         self._serial_locks[serial] = threading.Lock()
         self._open_devices[serial] = self._lib.open_device(serial_number=serial)
@@ -252,8 +254,6 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
 
         update_stat = self._open_devices[serial].hw.update_port()
         active_port = self._open_devices[serial].hw.port()
-
-        logging.info(update_stat, active_port)
 
         # Build the reply. The UTC-274 has 2 test ports.
         reply = usb_tester_service_pb2.GetActivePortReply(

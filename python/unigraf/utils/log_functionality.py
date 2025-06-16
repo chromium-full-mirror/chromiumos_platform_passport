@@ -23,6 +23,7 @@ import datetime
 import functools
 import logging
 import os
+import traceback
 
 
 def logger(func):
@@ -51,6 +52,7 @@ def logger(func):
             )
 
         except Exception as e:
+            logging.error("Error trace: %s", traceback.format_exc())
             logging.error("Error occurred in %s: %s", func.__name__, e)
             raise
 

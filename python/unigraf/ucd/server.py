@@ -55,6 +55,8 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
         self._tsilib = UniTAP.TsiLib()
         atexit.register(self.__del__)
 
+        logging.info("%sServer init done", self._device_name)
+
     # =========== Not implemented methods ===========
     def SetRoleVideoTester(self, request, context):
         """Selects a specific role for a given video tester."""
