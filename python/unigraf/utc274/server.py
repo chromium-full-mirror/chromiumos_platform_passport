@@ -93,7 +93,7 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
         serial = request.id
 
         if serial not in self._serial_locks or serial not in self._open_devices:
-            raise ProcessLookupError(f"Serial ${serial} is malformed.")
+            raise ProcessLookupError(f"Serial {serial} is malformed.")
 
         del self._serial_locks[serial]
         del self._open_devices[serial]
@@ -105,13 +105,7 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
     # TODO: add timeout and delay params
     @log_functionality.logger
     def _capability_get(self, serial, attr):
-        if serial not in self._open_devices:
-            logging.error("Invalid serial %s when taking device", serial)
-            raise ValueError(f"No device with serial {serial}")
-
-        if serial not in self._serial_locks:
-            logging.error("Invalid serial %s when taking lock", serial)
-            raise ValueError(f"No device lock with serial {serial}")
+        self._validate_serial_open(serial)
 
         val = None
         with self._serial_locks[serial]:
@@ -133,13 +127,7 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
     # TODO: add timeout and delay params
     @log_functionality.logger
     def _capability_set(self, serial, attr, val):
-        if serial not in self._open_devices:
-            logging.error("Invalid serial %s when taking device", serial)
-            raise ValueError(f"No device with serial {serial}")
-
-        if serial not in self._serial_locks:
-            logging.error("Invalid serial %s when taking lock", serial)
-            raise ValueError(f"No device lock with serial {serial}")
+        self._validate_serial_open(serial)
 
         with self._serial_locks[serial]:
             dev = self._open_devices[serial]
@@ -196,14 +184,7 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
     @log_functionality.logger
     def GetDpInfo(self, request, _context):
         serial = request.id
-
-        if serial not in self._open_devices:
-            logging.error("Invalid serial %s when taking device", serial)
-            raise ValueError(f"No device with serial {serial}")
-
-        if serial not in self._serial_locks:
-            logging.error("Invalid serial %s when taking lock", serial)
-            raise ValueError(f"No device lock with serial {serial}")
+        self._validate_serial_open(serial)
 
         ret = 0
         dp_val = {}
@@ -243,14 +224,7 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
         This method is used to get the active test port on the testing device.
         """
         serial = request.id
-
-        if serial not in self._open_devices:
-            logging.error("Invalid serial %s when taking device", serial)
-            raise ValueError(f"No device with serial {serial}")
-
-        if serial not in self._serial_locks:
-            logging.error("Invalid serial %s when taking lock", serial)
-            raise ValueError(f"No device lock with serial {serial}")
+        self._validate_serial_open(serial)
 
         update_stat = self._open_devices[serial].hw.update_port()
         active_port = self._open_devices[serial].hw.port()
@@ -274,14 +248,7 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
         This method is used to set the active test port on the testing device.
         """
         serial = request.id
-
-        if serial not in self._open_devices:
-            logging.error("Invalid serial %s when taking device", serial)
-            raise ValueError(f"No device with serial {serial}")
-
-        if serial not in self._serial_locks:
-            logging.error("Invalid serial %s when taking lock", serial)
-            raise ValueError(f"No device lock with serial {serial}")
+        self._validate_serial_open(serial)
 
         dev = self._open_devices[serial]
         set_status = 0
@@ -306,14 +273,7 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
         thetester and the DUT.
         """
         serial = request.id
-
-        if serial not in self._open_devices:
-            logging.error("Invalid serial %s when taking device", serial)
-            raise ValueError(f"No device with serial {serial}")
-
-        if serial not in self._serial_locks:
-            logging.error("Invalid serial %s when taking lock", serial)
-            raise ValueError(f"No device lock with serial {serial}")
+        self._validate_serial_open(serial)
 
         ret = 0
         with self._serial_locks[serial]:
@@ -330,14 +290,7 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
     def HardResetTester(self, request, _context):
         """This method is used to do a hard reset."""
         serial = request.id
-
-        if serial not in self._open_devices:
-            logging.error("Invalid serial %s when taking device", serial)
-            raise ValueError(f"No device with serial {serial}")
-
-        if serial not in self._serial_locks:
-            logging.error("Invalid serial %s when taking lock", serial)
-            raise ValueError(f"No device lock with serial {serial}")
+        self._validate_serial_open(serial)
 
         ret = 0
         with self._serial_locks[serial]:
@@ -355,14 +308,7 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
     def ResetPd(self, request, context):
         """This method is used to issue power delivery resets."""
         serial = request.id
-
-        if serial not in self._open_devices:
-            logging.error("Invalid serial %s when taking device", serial)
-            raise ValueError(f"No device with serial {serial}")
-
-        if serial not in self._serial_locks:
-            logging.error("Invalid serial %s when taking lock", serial)
-            raise ValueError(f"No device lock with serial {serial}")
+        self._validate_serial_open(serial)
 
         ret = 0
         with self._serial_locks[serial]:
@@ -392,13 +338,7 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
         logging.info("Temp file name was %s", tmp.name)
 
         serial = request.id
-        if serial not in self._open_devices:
-            logging.error("Invalid serial %s when taking device", serial)
-            raise ValueError(f"No device with serial {serial}")
-
-        if serial not in self._serial_locks:
-            logging.error("Invalid serial %s when taking lock", serial)
-            raise ValueError(f"No device lock with serial {serial}")
+        self._validate_serial_open(serial)
 
         ret = 0
         with self._serial_locks[serial]:
@@ -413,14 +353,7 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
     def GetPdos(self, request, _context):
         """This method is used to do a hard reset."""
         serial = request.id
-
-        if serial not in self._open_devices:
-            logging.error("Invalid serial %s when taking device", serial)
-            raise ValueError(f"No device with serial {serial}")
-
-        if serial not in self._serial_locks:
-            logging.error("Invalid serial %s when taking lock", serial)
-            raise ValueError(f"No device lock with serial {serial}")
+        self._validate_serial_open(serial)
 
         with self._serial_locks[serial]:
             dev = self._open_devices[serial]
@@ -437,3 +370,15 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
                 error_msg="Failed to update PDOs" if ret else "",
                 src_pdos=src_pdos,
             )
+
+    @log_functionality.logger
+    def _validate_serial_open(self, serial):
+        if serial not in self._open_devices:
+            logging.info("Open devices are: %s", self._open_devices)
+            logging.error("Invalid serial %s when taking device", serial)
+            raise ValueError(f"No device with serial {serial}")
+
+        if serial not in self._serial_locks:
+            logging.info("Open devices lock are: %s", self._serial_locks)
+            logging.error("Invalid serial %s when taking lock", serial)
+            raise ValueError(f"No device lock with serial {serial}")
