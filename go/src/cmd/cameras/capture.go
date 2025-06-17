@@ -24,9 +24,10 @@ func Capture() *cobra.Command {
 }
 
 type captureCmd struct {
-	portArg int
-	cameras []string
-	analyze bool
+	portArg  int
+	cameras  []string
+	analyze  bool
+	exposure int32
 }
 
 func (c *captureCmd) run(cmd *cobra.Command, args []string) error {
@@ -61,6 +62,7 @@ func (c *captureCmd) run(cmd *cobra.Command, args []string) error {
 					"Blue":  &passport.HSVMask{Min: &passport.HSV{Hue: 220, Saturation: 0.5, Value: 0.55}, Max: &passport.HSV{Hue: 260, Saturation: 1.0, Value: 1.0}},
 					"Off":   &passport.HSVMask{Min: &passport.HSV{Hue: 0, Saturation: 0.0, Value: 0.0}, Max: &passport.HSV{Hue: 360, Saturation: 0.4, Value: 0.6}},
 				},
+				ExposureMicroseconds: c.exposure,
 			}
 			resp, err := client.AnalyzeImageHSV(cmd.Context(), req)
 			if err != nil {
@@ -70,7 +72,8 @@ func (c *captureCmd) run(cmd *cobra.Command, args []string) error {
 			frame = resp.GetFrame()
 		} else {
 			req := &passport.GetAveragePixelRequest{
-				DeviceId: camera_id,
+				DeviceId:             camera_id,
+				ExposureMicroseconds: c.exposure,
 			}
 			resp, err := client.GetAveragePixel(cmd.Context(), req)
 			if err != nil {
@@ -106,6 +109,9 @@ func (c *captureCmd) Cmd() *cobra.Command {
 
 	cmd.Flags().BoolVar(
 		&c.analyze, "analyze", false, "Whether to analyze the image for HSV ranges.")
+
+	cmd.Flags().Int32Var(
+		&c.exposure, "exposure", 0, "Exposure time in microseconds.")
 
 	return cmd
 }

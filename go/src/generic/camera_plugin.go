@@ -14,6 +14,7 @@ import (
 	"image/jpeg"
 	"log/slog"
 	"path/filepath"
+	"strings"
 
 	"github.com/blackjack/webcam"
 
@@ -87,6 +88,11 @@ func (s *cameraPlugin) GetCameras(ctx context.Context, req *passport.GetCamerasR
 			name = err.Error()
 		}
 
+		controls := cam.GetControls()
+		for _, control := range controls {
+			slog.Info("Control", "name", control.Name, "type", control.Type, "min", control.Min, "max", control.Max, "step", control.Step)
+		}
+
 		// Cameras use their /dev/video* device path as ID, getting the device
 		// serial is more involved for little benefit.
 		slog.Info("Found valid camera", "port", port, "name", name)
@@ -105,7 +111,7 @@ func (s *cameraPlugin) GetCameras(ctx context.Context, req *passport.GetCamerasR
 
 // GetAveragePixel gets the average pixel color detected by the specified camera.
 func (s *cameraPlugin) GetAveragePixel(ctx context.Context, req *passport.GetAveragePixelRequest) (*passport.GetAveragePixelResponse, error) {
-	frame, err := captureFrame(ctx, req.GetDeviceId())
+	frame, err := captureFrame(ctx, req.GetDeviceId(), req.GetExposureMicroseconds())
 	if err != nil {
 		return nil, fmt.Errorf("cannot get average pixel, failed to capture frame: %w", err)
 	}
@@ -122,7 +128,7 @@ func (s *cameraPlugin) GetAveragePixel(ctx context.Context, req *passport.GetAve
 
 // AnalyzeImageHSV gets the average pixel color detected by the specified camera.
 func (s *cameraPlugin) AnalyzeImageHSV(ctx context.Context, req *passport.AnalyzeHSVRequest) (*passport.AnalyzeHSVResponse, error) {
-	frame, err := captureFrame(ctx, req.GetDeviceId())
+	frame, err := captureFrame(ctx, req.GetDeviceId(), req.GetExposureMicroseconds())
 	if err != nil {
 		return nil, fmt.Errorf("cannot analyze image HSV, failed to capture frame: %w", err)
 	}
@@ -161,7 +167,7 @@ func (s *cameraPlugin) AnalyzeImageHSV(ctx context.Context, req *passport.Analyz
 	}, nil
 }
 
-func captureFrame(ctx context.Context, devPort string) ([]byte, error) {
+func captureFrame(ctx context.Context, devPort string, exposureMicroseconds int32) ([]byte, error) {
 	const settlingTime = 10
 
 	slog.Info("Getting average pixel", "port", devPort)
@@ -180,6 +186,11 @@ func captureFrame(ctx context.Context, devPort string) ([]byte, error) {
 	err = cam.StartStreaming()
 	if err != nil {
 		return nil, fmt.Errorf("failed to start camera streaming")
+	}
+
+	err = setManualExposure(cam, exposureMicroseconds)
+	if err != nil {
+		return nil, fmt.Errorf("failed to set manual exposure: %w", err)
 	}
 
 	frameCount := 0
@@ -212,6 +223,61 @@ func captureFrame(ctx context.Context, devPort string) ([]byte, error) {
 		return frame, nil
 	}
 	return nil, fmt.Errorf("failed to capture a frame before context expired")
+}
+
+func setManualExposure(cam *webcam.Webcam, exposureMicroseconds int32) error {
+	// Set exposure to the requested value in 100uS units (V4L2_CID_EXPOSURE_ABSOLUTE)
+	// if the value is 0, we will turn the exposure to auto.
+	// Store control IDs we find by name
+	controlIDs := make(map[string]webcam.ControlID)
+	controls := cam.GetControls()
+	for id, ctrl := range controls {
+		// Store discovered IDs for easy lookup
+		controlIDs[strings.ToLower(ctrl.Name)] = id
+	}
+
+	// the value here is setting enum for V4L2_CID_EXPOSURE_AUTO and the value of
+	// 0 means V4L2_EXPOSURE_MANUAL (as defined in v4l2-controls.h)
+	// 3 means V4L2_EXPOSURE_APERTURE_PRIORITY (as defined in v4l2-controls.h)
+	const manualExposureSetting = int32(1)
+	const autoExposureSetting = int32(3)
+
+	if exposureMicroseconds == 0 {
+		return setControl(cam, controlIDs, controls, "Auto Exposure", autoExposureSetting)
+	}
+	err := setControl(cam, controlIDs, controls, "Auto Exposure", manualExposureSetting)
+	if err != nil {
+		return err
+	}
+	// Exposure Time, Absolute is in 100uS units (V4L2_CID_EXPOSURE_ABSOLUTE)
+	return setControl(cam, controlIDs, controls, "Exposure Time, Absolute", exposureMicroseconds/100)
+}
+
+func setControl(cam *webcam.Webcam, controlIDs map[string]webcam.ControlID, controls map[webcam.ControlID]webcam.Control, name string, value int32) error {
+	id, found := controlIDs[strings.ToLower(name)]
+	if !found || id == 0 {
+		return fmt.Errorf("Control '%s' not found on this camera.", name)
+	}
+
+	// Get current control info to clamp the value
+	ctrlInfo, ok := controls[id]
+	if !ok {
+		return fmt.Errorf("Control info for '%s' (ID %d) not found after discovery.", name, id)
+	}
+	setVal := value
+	if setVal < ctrlInfo.Min {
+		setVal = ctrlInfo.Min
+	}
+	if setVal > ctrlInfo.Max {
+		setVal = ctrlInfo.Max
+	}
+	val, err := cam.GetControl(id)
+	if err != nil {
+		return fmt.Errorf("Failed to get control %s: %w", name, err)
+	}
+	slog.Info("Current control", "name", name, "value", val, "id", id)
+	slog.Info("Setting control", "name", name, "value", setVal)
+	return cam.SetControl(id, setVal)
 }
 
 // Name returns the plugin's name.
