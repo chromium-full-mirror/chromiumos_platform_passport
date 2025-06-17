@@ -15,8 +15,12 @@ PROJECT_DIR="$(realpath -e "${SCRIPT_DIR}/..")"
 PROJECT_GOPATH="${PROJECT_DIR}/go"
 PROJECT_EXE_NAME="passport"
 PROJECT_EXE_PATH="${PROJECT_DIR}/go/bin/${PROJECT_EXE_NAME}"
-GOBIN="${GOBIN:-"${PROJECT_GOPATH}/bin"}"
+GOBIN="${GOBIN:-"/tmp/passport_go/bin"}"
 GO_CMD="${GOBIN}/${GO_VERSION}"
+export GOMODCACHE="/tmp/passport_go/cache"
+
+mkdir -p "${GOBIN}"
+mkdir -p "${GOMODCACHE}"
 
 set -x
 
