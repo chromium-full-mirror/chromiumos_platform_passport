@@ -12,7 +12,7 @@ if [[ -n "${REMOTE_SOURCE}" ]]; then
     FLAGS="
         --build-context apiconfig=https://chromium.googlesource.com/chromiumos/config.git#main
         --build-context passport=https://chromium.googlesource.com/chromiumos/platform/passport.git#main
-        --build-context dev=https://chromium.googlesource.com/chromiumos/platform/dev-util.git#main:test
+        --build-context dev=https://chromium.googlesource.com/chromiumos/platform/dev-util.git#main:src
         -f ${DIR}/../dockerfiles/Dockerfile
         "
 else
