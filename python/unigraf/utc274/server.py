@@ -86,6 +86,12 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
         self._serial_locks[serial] = threading.Lock()
         self._open_devices[serial] = dev
 
+        logging.info(
+            "Device FW: pdc %s, ms %s",
+            dev.hw.pdc_version(),
+            dev.hw.ms_version(),
+        )
+
         return usb_tester_service_pb2.OpenTesterReply(err_code=0, error_msg="")
 
     @log_functionality.logger
