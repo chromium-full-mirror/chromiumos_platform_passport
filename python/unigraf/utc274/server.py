@@ -79,8 +79,12 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
             logging.info("Open devices are: %s", self._open_devices)
             raise ProcessLookupError(f"Serial {serial} is already open.")
 
+        # Try to open the device first so in case this fails we dont populate
+        # the locks
+        dev = self._lib.open_device(serial_number=serial)
+
         self._serial_locks[serial] = threading.Lock()
-        self._open_devices[serial] = self._lib.open_device(serial_number=serial)
+        self._open_devices[serial] = dev
 
         return usb_tester_service_pb2.OpenTesterReply(err_code=0, error_msg="")
 
