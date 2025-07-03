@@ -53,10 +53,14 @@ CAPABILITIES_TO_TEST = [
     usb_pb2.CONSTRAINED_POWER,
     usb_pb2.POWER_DELIVERY,
     usb_pb2.DISPLAY_PORT_AM,
+    usb_pb2.TRY_BEHAVIOUR,
+    usb_pb2.NON_PD_CURRENT,
 ]
 
 
-class TestUsbTesterGetters(unittest.TestCase):
+class UsbTesterIntegrationTestBase(unittest.TestCase):
+    """Base class for USB tester integration tests."""
+
     server_address: str = DEFAULT_SERVER_ADDRESS
     channel: grpc.Channel | None = None
     stub: usb_pb2_grpc.UsbTesterServiceStub | None = None
@@ -117,6 +121,10 @@ class TestUsbTesterGetters(unittest.TestCase):
             cls.channel.close()
             logger.info("gRPC channel closed.")
 
+
+class TestUsbTesterGetters(UsbTesterIntegrationTestBase):
+    """Test suite for getter methods of the USB tester service."""
+
     def test_get_dp_info(self):
         self.stub.GetDpInfo(usb_pb2.GetDpInfoRequest(id=self.tester_id))
 
@@ -125,6 +133,24 @@ class TestUsbTesterGetters(unittest.TestCase):
 
     def test_get_active_port(self):
         self.stub.GetActivePort(usb_pb2.GetActivePortRequest(id=self.tester_id))
+
+
+class TestUsbTesterActions(UsbTesterIntegrationTestBase):
+    """Test suite for action/command methods of the USB tester service."""
+
+    def test_send_vdm_hpd(self):
+        """Tests the SendVdmHpd method."""
+        self.stub.SendVdmHpd(
+            usb_pb2.SendVdmHpdRequest(
+                id=self.tester_id, vdm_hpd=usb_pb2.VDM_HPD_IRQ
+            )
+        )
+
+    def test_simulate_key_press(self):
+        """Tests the SimulateKeyPress method."""
+        self.stub.SimulateKeyPress(
+            usb_pb2.SimulateKeyPressRequest(id=self.tester_id)
+        )
 
 
 def _create_capability_test_method(capability_enum_value):
@@ -164,11 +190,16 @@ if __name__ == "__main__":
 
     args, unknown_args = parser.parse_known_args()
 
-    TestUsbTesterGetters.server_address = args.server_address
+    UsbTesterIntegrationTestBase.server_address = args.server_address
 
-    # Create a TestSuite and add tests from TestUsbTesterGetters
-    suite = unittest.TestSuite()
-    suite.addTest(unittest.makeSuite(TestUsbTesterGetters))
+    # Create a TestLoader and discover tests from the test classes.
+    loader = unittest.TestLoader()
+    suite = unittest.TestSuite(
+        [
+            loader.loadTestsFromTestCase(TestUsbTesterGetters),
+            loader.loadTestsFromTestCase(TestUsbTesterActions),
+        ]
+    )
 
     # Use TextTestRunner with verbosity=2
     runner = unittest.runner.TextTestRunner(verbosity=2)
