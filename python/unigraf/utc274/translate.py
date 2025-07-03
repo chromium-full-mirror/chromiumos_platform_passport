@@ -57,7 +57,7 @@ SDK_F_MAP = {
         "pd.select_current_load",
     ],
     usb_tester_service_pb2.SRC_PULL_UP: [
-        "pd.src_cc_pullup",
+        "pd.src_cc_pull_up",
         "pd.update_src_pull_up",
         "pd.select_src_pull_up",
     ],
@@ -151,6 +151,16 @@ SDK_F_MAP = {
         "hw.update_usb_path",
         "hw.select_usb_path",
     ],
+    usb_tester_service_pb2.TRY_BEHAVIOUR: [
+        "pd.try_behavior",
+        "pd.update_try_behavior",
+        "pd.select_try_behavior",
+    ],
+    usb_tester_service_pb2.NON_PD_CURRENT: [
+        "pd.nonpd_current_load",
+        "pd.update_nonpd_current_load",
+        "pd.select_nonpd_current_load",
+    ],
 }
 
 CAPABILITY_RETURN_FIELD_MAP = {
@@ -181,6 +191,8 @@ CAPABILITY_RETURN_FIELD_MAP = {
     usb_tester_service_pb2.POWER_DELIVERY: "power_delivery",
     usb_tester_service_pb2.DISPLAY_PORT_AM: "display_port_am",
     usb_tester_service_pb2.USB_PATH: "usb_path",
+    usb_tester_service_pb2.TRY_BEHAVIOUR: "try_behaviour",
+    usb_tester_service_pb2.NON_PD_CURRENT: "non_descrete",
 }
 
 DISCRETE_CAPABILITIES = [
@@ -200,6 +212,7 @@ DISCRETE_CAPABILITIES = [
     usb_tester_service_pb2.POWER_DELIVERY,
     usb_tester_service_pb2.DISPLAY_PORT_AM,
     usb_tester_service_pb2.USB_PATH,
+    usb_tester_service_pb2.TRY_BEHAVIOUR,
 ]
 
 NON_DISCRETE_CAPABILITIES = [
@@ -216,6 +229,7 @@ NON_DISCRETE_CAPABILITIES = [
     usb_tester_service_pb2.VBUS_CC2,
     usb_tester_service_pb2.VBUS_SBU1,
     usb_tester_service_pb2.VBUS_SBU2,
+    usb_tester_service_pb2.NON_PD_CURRENT,
 ]
 
 # The values in this map are taken from the user manual,
@@ -259,6 +273,12 @@ GRCP_CAPABILITY_SDK_VALUE_MAP_GRCP_VALUE = {
         usb_tester_service_pb2.USB_PATH,
         1,
     ): usb_tester_service_pb2.USB_PATH_EXTERNAL,
+    (
+        usb_tester_service_pb2.TRY_BEHAVIOUR,
+        0,
+    ): usb_tester_service_pb2.TRY_BEHAVIOUR_NOT_SET,
+    (usb_tester_service_pb2.TRY_BEHAVIOUR, 1): usb_tester_service_pb2.TRY_SNK,
+    (usb_tester_service_pb2.TRY_BEHAVIOUR, 2): usb_tester_service_pb2.TRY_SRC,
 }
 
 # The values in this map are taken from the user manual,
@@ -302,6 +322,12 @@ GRCP_CAPABILITY_VALUE_MAP_SDK_VALUE = {
         usb_tester_service_pb2.USB_PATH,
         usb_tester_service_pb2.USB_PATH_EXTERNAL,
     ): 1,
+    (
+        usb_tester_service_pb2.TRY_BEHAVIOUR,
+        usb_tester_service_pb2.TRY_BEHAVIOUR_NOT_SET,
+    ): 0,
+    (usb_tester_service_pb2.TRY_BEHAVIOUR, usb_tester_service_pb2.TRY_SNK): 1,
+    (usb_tester_service_pb2.TRY_BEHAVIOUR, usb_tester_service_pb2.TRY_SRC): 2,
 }
 
 

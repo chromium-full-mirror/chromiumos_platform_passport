@@ -13,6 +13,7 @@ import logging
 import operator
 import tempfile
 import threading
+import time
 
 # pylint: disable=import-error
 from chromiumos.test.lab.api.passport import usb_tester_service_pb2
@@ -236,14 +237,24 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
         serial = request.id
         self._validate_serial_open(serial)
 
-        update_stat = self._open_devices[serial].hw.update_port()
-        active_port = self._open_devices[serial].hw.port()
+        dev = self._open_devices[serial]
+        update_stat = dev.hw.update_port()
+        active_port = dev.hw.port()
+
+        port_state_api = f"hw.is_port_{active_port + 1}_enabled"
+        port_on = operator.attrgetter(port_state_api)(dev)()
+        port_state = usb_tester_service_pb2.PORT_STATE_NOT_SET
+        if port_on:
+            port_state = usb_tester_service_pb2.PORT_STATE_ON
+        else:
+            port_state = usb_tester_service_pb2.PORT_STATE_OFF
 
         # Build the reply. The UTC-274 has 2 test ports.
         reply = usb_tester_service_pb2.GetActivePortReply(
             err_code=update_stat,
             port_id=active_port,
             max_num_ports=2,
+            state=port_state,
         )
 
         if update_stat != 0:
@@ -267,6 +278,18 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
             set_status = dev.hw.select_port(request.port_id)
 
         dev.hw.update_port()
+
+        time.sleep(1)
+        port_state_api = f"hw.is_port_{request.port_id + 1}_enabled"
+        port_state_api_clt = f"hw.toggle_port_{request.port_id + 1}"
+        if request.state == usb_tester_service_pb2.PORT_STATE_OFF:
+            if operator.attrgetter(port_state_api)(dev)():
+                logging.info(f"Disabled port {request.port_id + 1}")
+                operator.attrgetter(port_state_api_clt)(dev)(1)
+        elif request.state == usb_tester_service_pb2.PORT_STATE_ON:
+            if not operator.attrgetter(port_state_api)(dev)():
+                logging.info(f"Enabled port {request.port_id + 1}")
+                operator.attrgetter(port_state_api_clt)(dev)(0)
 
         reply = usb_tester_service_pb2.SetActivePortReply(
             err_code=set_status,
@@ -379,6 +402,42 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
                 err_code=ret,
                 error_msg="Failed to update PDOs" if ret else "",
                 src_pdos=src_pdos,
+            )
+
+    @log_functionality.logger
+    def SendVdmHpd(self, request, context):
+        """This method is used send a VDM HPDs."""
+
+        serial = request.id
+        self._validate_serial_open(serial)
+
+        with self._serial_locks[serial]:
+            dev = self._open_devices[serial]
+
+            ret = 0
+            if request.vdm_hpd == usb_tester_service_pb2.VDM_HPD_IRQ:
+                ret = dev.dp.hpd_vdm_irq_control()
+
+            return usb_tester_service_pb2.SendVdmHpdReply(
+                err_code=ret,
+                error_msg="Failed to send vdm" if ret else "",
+            )
+
+    @log_functionality.logger
+    def SimulateKeyPress(self, request, context):
+        """Simulate a key press. ATM this will simulate the "G" key press."""
+        serial = request.id
+        self._validate_serial_open(serial)
+
+        with self._serial_locks[serial]:
+            dev = self._open_devices[serial]
+            ret = dev.hw.hid_keyboard(
+                UTCLibrary.DeviceAPI.Common.HIDKeyboardKeys.KEY_G,
+            )
+
+            return usb_tester_service_pb2.SimulateKeyPressReply(
+                err_code=ret,
+                error_msg="Failed to simulate key G press" if ret else "",
             )
 
     @log_functionality.logger

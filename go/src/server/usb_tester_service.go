@@ -350,3 +350,37 @@ func (s *usbTesterServiceServer) GetPdos(
 
 	return tester.GetPdos(ctx, req)
 }
+
+// This method is used send a VDM HPDs
+func (s *usbTesterServiceServer) SendVdmHpd(
+	ctx context.Context,
+	req *passport.SendVdmHpdRequest,
+) (*passport.SendVdmHpdReply, error) {
+
+	tester := s.testerMap[req.Id]
+	if tester == nil {
+		return nil, status.Errorf(
+			codes.NotFound,
+			fmt.Sprintf("there is no USB tester with id: %s", req.Id),
+		)
+	}
+
+	return tester.SendVdmHpd(ctx, req)
+}
+
+// Simulate a key press. ATM this will simulate the "G" key press.
+func (s *usbTesterServiceServer) SimulateKeyPress(
+	ctx context.Context,
+	req *passport.SimulateKeyPressRequest,
+) (*passport.SimulateKeyPressReply, error) {
+
+	tester := s.testerMap[req.Id]
+	if tester == nil {
+		return nil, status.Errorf(
+			codes.NotFound,
+			fmt.Sprintf("there is no USB tester with id: %s", req.Id),
+		)
+	}
+
+	return tester.SimulateKeyPress(ctx, req)
+}

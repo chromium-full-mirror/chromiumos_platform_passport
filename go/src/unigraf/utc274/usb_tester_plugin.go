@@ -205,3 +205,21 @@ func (s *usbTesterPlugin) GetPdos(
 
 	return s.unigraf_control_client.GetPdos(ctx, req)
 }
+
+// This method is used send a VDM HPDs
+func (s *usbTesterPlugin) SendVdmHpd(
+	ctx context.Context,
+	req *passport.SendVdmHpdRequest,
+) (*passport.SendVdmHpdReply, error) {
+
+	return s.unigraf_control_client.SendVdmHpd(ctx, req)
+}
+
+// Simulate a key press. ATM this will simulate the "G" key press.
+func (s *usbTesterPlugin) SimulateKeyPress(
+	ctx context.Context,
+	req *passport.SimulateKeyPressRequest,
+) (*passport.SimulateKeyPressReply, error) {
+
+	return s.unigraf_control_client.SimulateKeyPress(ctx, req)
+}
