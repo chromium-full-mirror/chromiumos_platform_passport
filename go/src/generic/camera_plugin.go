@@ -62,8 +62,10 @@ func (s *cameraPlugin) GetCameras(ctx context.Context, req *passport.GetCamerasR
 		return nil, fmt.Errorf("failed to probe for video devices: %w", err)
 	}
 
+	retries := 0
 	var cameras []*passport.Camera
-	for _, port := range ports {
+	for i := 0; i < len(ports); i++ {
+		port := ports[i]
 		cam, err := webcam.Open(port)
 		if err != nil {
 			slog.Warn("Failed to open port on device", "port", port)
@@ -74,6 +76,12 @@ func (s *cameraPlugin) GetCameras(ctx context.Context, req *passport.GetCamerasR
 		err = cam.StartStreaming()
 		if err != nil {
 			slog.Warn("Failed to start streaming on camera", "port", port, "error", err)
+			if strings.Contains(err.Error(), "protocol error") && retries < 3 {
+				slog.Warn("Retrying", "port", port)
+				retries++
+				i--
+				cam.Close()
+			}
 			continue
 		}
 
@@ -170,7 +178,7 @@ func (s *cameraPlugin) AnalyzeImageHSV(ctx context.Context, req *passport.Analyz
 func captureFrame(ctx context.Context, devPort string, exposureMicroseconds int32) ([]byte, error) {
 	const settlingTime = 10
 
-	slog.Info("Getting average pixel", "port", devPort)
+	slog.Info("Capturing frame", "port", devPort)
 
 	cam, err := webcam.Open(devPort)
 	if err != nil {
@@ -183,9 +191,14 @@ func captureFrame(ctx context.Context, devPort string, exposureMicroseconds int3
 		return nil, fmt.Errorf("failed to configure image format for %q: %w", devPort, err)
 	}
 
-	err = cam.StartStreaming()
-	if err != nil {
-		return nil, fmt.Errorf("failed to start camera streaming")
+	for i := 0; true; i++ {
+		err = cam.StartStreaming()
+		if err != nil && i > 5 {
+			return nil, fmt.Errorf("failed to start camera streaming")
+		} else if err == nil {
+			break
+		}
+		slog.Warn("Error starting streaming retrying:", "port", devPort, "error", err)
 	}
 
 	err = setManualExposure(cam, exposureMicroseconds)

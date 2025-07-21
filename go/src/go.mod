@@ -5,6 +5,8 @@ go 1.23.0
 toolchain go1.23.9
 
 replace (
+	// use forked copy with fix for b/429248445
+	github.com/blackjack/webcam v0.6.1 => github.com/bbrother/webcam v0.0.0-20250721162947-1dd0392aec6d
 	go.chromium.org/chromiumos/config/go v0.0.0 => ../../../../config/go/src/go.chromium.org/chromiumos/config/go
 	go.chromium.org/chromiumos/test v0.0.0 => ../../../../platform/dev/src/go.chromium.org/chromiumos/test
 )
