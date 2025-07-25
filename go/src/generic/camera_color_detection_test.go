@@ -6,8 +6,6 @@ package generic
 
 import (
 	"fmt"
-	"github.com/google/go-cmp/cmp"
-	"github.com/google/go-cmp/cmp/cmpopts"
 	"image"
 	"image/color"
 	"image/jpeg"
@@ -15,6 +13,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 )
 
 type testImage struct {
@@ -107,6 +108,10 @@ func realTestImages(t *testing.T) []testImage {
 	}
 	return []testImage{
 		testImage{
+			path:          filepath.Join(testdataDir, "red_mediocre.jpeg"),
+			expectedColor: "Red",
+		},
+		testImage{
 			path:          filepath.Join(testdataDir, "monitor_off_with_monitor_message.jpeg"),
 			expectedColor: "Off",
 		},
@@ -183,9 +188,9 @@ func realTestImages(t *testing.T) []testImage {
 
 var hsvRanges = map[string]HSVRange{
 	// red can be on either end of the hue range so split into two ranges.
-	"Red":   HSVRange{Min: HSV{H: 330, S: 0.5, V: 0.55}, Max: HSV{H: 30, S: 1.0, V: 1.0}},
-	"Green": HSVRange{Min: HSV{H: 90, S: 0.5, V: 0.55}, Max: HSV{H: 165, S: 1.0, V: 1.0}},
-	"Blue":  HSVRange{Min: HSV{H: 210, S: 0.5, V: 0.55}, Max: HSV{H: 270, S: 1.0, V: 1.0}},
+	"Red":   HSVRange{Min: HSV{H: 330, S: 0.45, V: 0.55}, Max: HSV{H: 30, S: 1.0, V: 1.0}},
+	"Green": HSVRange{Min: HSV{H: 90, S: 0.45, V: 0.55}, Max: HSV{H: 165, S: 1.0, V: 1.0}},
+	"Blue":  HSVRange{Min: HSV{H: 210, S: 0.45, V: 0.55}, Max: HSV{H: 270, S: 1.0, V: 1.0}},
 	// Off we are just looking at saturation and value.
 	"Off": HSVRange{Min: HSV{H: 0, S: 0.0, V: 0.0}, Max: HSV{H: 360, S: 0.40, V: 0.60}},
 }
