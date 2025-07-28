@@ -21,6 +21,7 @@ from chromiumos.test.lab.api.passport import usb_tester_service_pb2_grpc
 from utc274 import translate
 import UTCLibrary
 
+from utils import constants
 from utils import log_functionality
 
 
@@ -130,7 +131,7 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
                 )
                 raise e
 
-            update_f()
+            update_f(delay=constants.UTC_274_DELAY_S)
             val = get_f()
 
         return val
@@ -151,8 +152,8 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
                 )
                 raise e
 
-            ret = set_f(val)
-            update_f()
+            ret = set_f(arg=val, delay=constants.UTC_274_DELAY_S)
+            update_f(delay=constants.UTC_274_DELAY_S)
 
             return ret
 
@@ -202,7 +203,7 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
         with self._serial_locks[serial]:
             dev = self._open_devices[serial]
 
-            ret = dev.dp.update_dp_info()
+            ret = dev.dp.update_dp_info(delay=constants.UTC_274_DELAY_S)
             dp_val = dev.dp.dp_info()
 
         if ret != 0:
@@ -238,11 +239,13 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
         self._validate_serial_open(serial)
 
         dev = self._open_devices[serial]
-        update_stat = dev.hw.update_port()
+        update_stat = dev.hw.update_port(delay=constants.UTC_274_DELAY_S)
         active_port = dev.hw.port()
 
         port_state_api = f"hw.is_port_{active_port + 1}_enabled"
-        port_on = operator.attrgetter(port_state_api)(dev)()
+        port_on = operator.attrgetter(port_state_api)(dev)(
+            delay=constants.UTC_274_DELAY_S
+        )
         port_state = usb_tester_service_pb2.PORT_STATE_NOT_SET
         if port_on:
             port_state = usb_tester_service_pb2.PORT_STATE_ON
@@ -275,21 +278,31 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
         set_status = 0
         active_port = dev.hw.port()
         if active_port != request.port_id:
-            set_status = dev.hw.select_port(request.port_id)
+            set_status = dev.hw.select_port(
+                arg=request.port_id, delay=constants.UTC_274_DELAY_S
+            )
 
-        dev.hw.update_port()
+        dev.hw.update_port(delay=constants.UTC_274_DELAY_S)
 
         time.sleep(1)
         port_state_api = f"hw.is_port_{request.port_id + 1}_enabled"
         port_state_api_clt = f"hw.toggle_port_{request.port_id + 1}"
         if request.state == usb_tester_service_pb2.PORT_STATE_OFF:
-            if operator.attrgetter(port_state_api)(dev)():
+            if operator.attrgetter(port_state_api)(dev)(
+                delay=constants.UTC_274_DELAY_S
+            ):
                 logging.info(f"Disabled port {request.port_id + 1}")
-                operator.attrgetter(port_state_api_clt)(dev)(1)
+                operator.attrgetter(port_state_api_clt)(dev)(
+                    arg=1, delay=constants.UTC_274_DELAY_S
+                )
         elif request.state == usb_tester_service_pb2.PORT_STATE_ON:
-            if not operator.attrgetter(port_state_api)(dev)():
+            if not operator.attrgetter(port_state_api)(dev)(
+                delay=constants.UTC_274_DELAY_S
+            ):
                 logging.info(f"Enabled port {request.port_id + 1}")
-                operator.attrgetter(port_state_api_clt)(dev)(0)
+                operator.attrgetter(port_state_api_clt)(dev)(
+                    arg=0, delay=constants.UTC_274_DELAY_S
+                )
 
         reply = usb_tester_service_pb2.SetActivePortReply(
             err_code=set_status,
@@ -391,7 +404,7 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
         with self._serial_locks[serial]:
             dev = self._open_devices[serial]
 
-            ret = dev.pd.update_dut_pdo()
+            ret = dev.pd.update_dut_pdo(delay=constants.UTC_274_DELAY_S)
             sdk_pdos = dev.pd.dut_pdo()
             src_pdos = [
                 int.from_bytes(bytearray(pdo), byteorder="little", signed=False)

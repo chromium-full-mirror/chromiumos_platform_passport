@@ -40,3 +40,4 @@ UTC_274_FW = {
 UTC_274_FIRMWARE_BASE_LINK = (
     "https://storage.googleapis.com/chromeos-localmirror/distfiles/"
 )
+UTC_274_DELAY_S = 0.35

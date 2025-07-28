@@ -99,7 +99,7 @@ SDK_F_MAP = {
     usb_tester_service_pb2.VBUS_CC1: [
         "pd.cc1_voltage",
         "pd.update_cc1_voltage",
-        "pd.select_cc2_voltage",
+        "pd.select_cc1_voltage",
     ],
     usb_tester_service_pb2.VBUS_CC2: [
         "pd.cc1_voltage",
