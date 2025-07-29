@@ -15,6 +15,7 @@ import (
 	"go.bug.st/serial"
 
 	"go.chromium.org/chromiumos/config/go/test/lab/api/passport"
+	"go.chromiumos.org/chromiumos/platform/passport/port"
 	"go.chromiumos.org/chromiumos/platform/passport/server"
 )
 
@@ -44,6 +45,8 @@ type switchInfo struct {
 type switchPlugin struct {
 	// Maps switch UID to switch details.
 	switches map[string]*switchInfo
+	// inherit port manager implementation
+	port.PortManager
 }
 
 func init() {
@@ -116,8 +119,9 @@ func (s *switchPlugin) refreshSwitches(ctx context.Context) error {
 	// Retrieve the switch information from each serial port.
 	switches := make(map[string]*switchInfo)
 	for _, port := range ports {
-		// Only use serial ports containing ACM*, e.g. /dev/ttyACM0.
-		if !strings.Contains(port, "ACM") {
+		// Only use serial ports containing ACM*, e.g. /dev/ttyACM0
+		// and not used by other plugins.
+		if !strings.Contains(port, "ACM") || s.IsIgnored(port) {
 			slog.Debug("Skipping port", "port", port)
 			continue
 		}
@@ -136,12 +140,14 @@ func (s *switchPlugin) refreshSwitches(ctx context.Context) error {
 		validDevice := isMcciDevice(response)
 		if !validDevice {
 			slog.Debug("Skipping port info", "info", response)
+			s.ReleasePort(port)
 			continue
 		}
 
 		deviceData, err := sendDataToSerialPort(ctx, port, SwitchStatusCmd)
 		if err != nil {
 			slog.Error("Failed to read serial port", "port", port, "error", err)
+			s.ReleasePort(port)
 			continue
 		}
 
@@ -149,6 +155,7 @@ func (s *switchPlugin) refreshSwitches(ctx context.Context) error {
 
 		info.port = port
 		slog.Info("Found valid device", "model", info.model, "port", info.port, "uid", info.uid)
+		s.UsePort(port)
 		switches[info.uid] = info
 		break
 	}

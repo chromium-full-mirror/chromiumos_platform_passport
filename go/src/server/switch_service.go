@@ -102,6 +102,18 @@ func (s *switchServiceServer) refreshSwitches(ctx context.Context, req *passport
 	var switches []*passport.SwitchFixture
 	switchMap := make(map[string]SwitchPlugin)
 	for _, plugin := range s.plugins {
+		// Ignore all ports being used by other plugins this actually sets all
+		// ports being used by all plugins but the port manager knows to not
+		//  ignore ports that are currently in use.  This optimization mean
+		// that if a switch is unplugged and a new one of different type is
+		// plugged in and ends up with port as the previously it could
+		// take 2 rounds of refresh to detect it.  This is unlikely in a
+		// real world situation so not accounting for this corner case.
+		ignoreList := []string{}
+		for _, plugin := range s.plugins {
+			ignoreList = append(ignoreList, plugin.GetUsedPorts()...)
+		}
+		plugin.UpdateIgnoredPorts(ignoreList)
 		resp, err := plugin.GetSwitches(ctx, req)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get switches for plugin %q: %w", plugin.Name(), err)

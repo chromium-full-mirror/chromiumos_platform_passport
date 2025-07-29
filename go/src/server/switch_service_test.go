@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"go.chromium.org/chromiumos/config/go/test/lab/api/passport"
+	"go.chromiumos.org/chromiumos/platform/passport/port"
 )
 
 type getSwitchFunc func(context.Context, *passport.GetSwitchesRequest) (*passport.GetSwitchesResponse, error)
@@ -18,6 +19,7 @@ type resetAllSwitchesFunc func(context.Context, *passport.ResetAllSwitchesReques
 
 // mockSwitchPlugin is mock switch plugin.
 type mockSwitchPlugin struct {
+	port.PortManager
 	getSwitches         getSwitchFunc
 	configureSwitchPort configureSwitchFunc
 	resetAllSwitches    resetAllSwitchesFunc
