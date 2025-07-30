@@ -21,8 +21,9 @@ func Disable() *cobra.Command {
 }
 
 type disableCmd struct {
-	portArg  int
-	switches []string
+	portArg    int
+	switches   []string
+	switchPort string
 }
 
 func (c *disableCmd) run(cmd *cobra.Command, args []string) error {
@@ -44,7 +45,7 @@ func (c *disableCmd) run(cmd *cobra.Command, args []string) error {
 		c.switches = ids
 	}
 
-	return configureSwitches(cmd.Context(), client, c.switches, passport.SwitchPortState_SWITCH_PORT_DISABLED)
+	return configureSwitches(cmd.Context(), client, c.switches, c.switchPort, passport.SwitchPortState_SWITCH_PORT_DISABLED)
 }
 
 func (c *disableCmd) Cmd() *cobra.Command {
@@ -60,6 +61,9 @@ func (c *disableCmd) Cmd() *cobra.Command {
 
 	cmd.Flags().StringArrayVar(
 		&c.switches, "switches", []string{}, "A list of switches to configure or leave empty to disable all.")
+
+	cmd.Flags().StringVar(
+		&c.switchPort, "switch-port", "", "The port on the switch to control.")
 
 	return cmd
 }

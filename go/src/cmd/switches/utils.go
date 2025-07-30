@@ -25,12 +25,13 @@ func getSwitches(ctx context.Context, client passport.SwitchServiceClient) ([]st
 	return res, nil
 }
 
-func configureSwitches(ctx context.Context, client passport.SwitchServiceClient, switches []string, state passport.SwitchPortState) error {
+func configureSwitches(ctx context.Context, client passport.SwitchServiceClient, switches []string, switchPort string, state passport.SwitchPortState) error {
 	for _, id := range switches {
 		slog.Info("Configuring switch", "switch id", id, "state", state)
 		req := &passport.ConfigureSwitchPortRequest{
 			SwitchId: id,
 			State:    state,
+			PortId:   switchPort,
 		}
 		if _, err := client.ConfigureSwitchPort(ctx, req); err != nil {
 			return fmt.Errorf("Failed to configure switch: %q, %v", id, err)
