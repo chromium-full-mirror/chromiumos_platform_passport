@@ -78,3 +78,36 @@ using:
 ```
 
 If you omit the `-switches` argument then all found switches will be used.
+
+
+## Deploying Passport Updates
+
+As of 2025-8-31 passport updates must be deployed manually. Before we discuss
+how to push a passport update lets talk first about the different versions of
+passport.
+
+Passport has several versions that are used:
+
+1.  The scripts and development tools use
+    `us-docker.pkg.dev/cros-passport/passport/passport:latest`
+2.  Lab runs use `us-docker.pkg.dev/cros-registry/test-services/cros-passport`
+    with the tag `staging_cros-passport` for staging configs and
+    `prod_cros-passport` for prod configs.
+
+The lab run versions are built from the
+`us-docker.pkg.dev/cros-passport/passport/passport:latest` development version.
+
+To update development version simply run:
+
+```bash
+PUSH=1 REMOTE_SOURCE=1 ./scripts/build_docker.sh
+```
+
+Once that has been updated the staging version for the lab should get built and
+updated within about an hour. You can see the tagged versions
+[here](https://pantheon.corp.google.com/artifacts/docker/cros-registry/us/test-services/cros-passport?inv=1&invt=Ab4OnQ&orgonly=true&project=cros-registry&supportedpurview=organizationId).
+
+The prod version is updated manually ~2 times a week (along with other tools)
+but you can ask the
+[TSE team](https://moma.corp.google.com/team/1871447779735?hq=type%3Apeople&q=cdelagarza%40google.com)
+to do a push if you need it sooner.
