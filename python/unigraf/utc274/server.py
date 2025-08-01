@@ -141,6 +141,14 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
     def _capability_set(self, serial, attr, val):
         self._validate_serial_open(serial)
 
+        # TODO(b/435667490): ignore these calls as they are breaking the device.
+        # Unblock them once unigraf FW is updated.
+        if (
+            attr == usb_tester_service_pb2.CABLE_MODE
+            or attr == usb_tester_service_pb2.ACTIVE_CC
+        ):
+            return 0
+
         with self._serial_locks[serial]:
             dev = self._open_devices[serial]
             try:
