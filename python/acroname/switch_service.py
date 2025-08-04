@@ -50,8 +50,8 @@ class SwitchService(switch_pb2_grpc.SwitchServiceServicer):
     @log_functionality.logger
     def ResetAllSwitches(self, request, context):  # pylint: disable=W0613
         """Re-initializes all switches and sets them to "disabled" state."""
-        for switch in self.GetSwitches(None, context):
-            logging.info("resetting switch: %s", switch.Id)
+        for switch in self.GetSwitches(None, context).switches:
+            logging.info("resetting switch: %s", switch.id)
             self._switches[switch.id].reset()
 
         return switch_pb2.ResetAllSwitchesResponse()
@@ -76,6 +76,6 @@ class SwitchService(switch_pb2_grpc.SwitchServiceServicer):
         return switch_pb2.ConfigureSwitchPortResponse()
 
     def __del__(self):
-        for switch in self._switches:
+        for switch in self._switches.values():
             switch.close()
         self._switches = {}
