@@ -63,7 +63,7 @@ func createTestImages(t *testing.T) []testImage {
 		testImage{path: filepath.Join(tempDir, "green_hsv.jpg"), expectedColor: "Green"},
 		testImage{path: filepath.Join(tempDir, "blue_hsv.jpg"), expectedColor: "Blue"},
 		testImage{path: filepath.Join(tempDir, "yellow_hsv.jpg"), expectedColor: ""},
-		testImage{path: filepath.Join(tempDir, "dark_red_hsv.jpg"), expectedColor: ""},
+		testImage{path: filepath.Join(tempDir, "dark_red_hsv.jpg"), expectedColor: "Off"},
 		testImage{path: filepath.Join(tempDir, "desaturated_red_hsv.jpg"), expectedColor: "Red"},
 		testImage{path: filepath.Join(tempDir, "glare_on_off_screen.jpg"), expectedColor: "Off"},
 		testImage{path: filepath.Join(tempDir, "true_black.jpg"), expectedColor: "Off"},
@@ -112,15 +112,7 @@ func realTestImages(t *testing.T) []testImage {
 			expectedColor: "Red",
 		},
 		testImage{
-			path:          filepath.Join(testdataDir, "monitor_off_with_monitor_message.jpeg"),
-			expectedColor: "Off",
-		},
-		testImage{
 			path:          filepath.Join(testdataDir, "g_false_positive_0.jpeg"),
-			expectedColor: "Off",
-		},
-		testImage{
-			path:          filepath.Join(testdataDir, "monitor_off_glare_led_reflection.jpeg"),
 			expectedColor: "Off",
 		},
 		testImage{
@@ -156,10 +148,6 @@ func realTestImages(t *testing.T) []testImage {
 			expectedColor: "Green",
 		},
 		testImage{
-			path:          filepath.Join(testdataDir, "monitor_off_with_color_reflections.jpeg"),
-			expectedColor: "Off",
-		},
-		testImage{
 			path:          filepath.Join(testdataDir, "r_good_0.jpeg"),
 			expectedColor: "Red",
 		},
@@ -183,6 +171,30 @@ func realTestImages(t *testing.T) []testImage {
 			path:          filepath.Join(testdataDir, "r_good_5.jpeg"),
 			expectedColor: "Red",
 		},
+		testImage{
+			path:          filepath.Join(testdataDir, "monitor_off_glare_led_reflection.jpeg"),
+			expectedColor: "Off",
+		},
+		testImage{
+			path:          filepath.Join(testdataDir, "monitor_off_glare_led_reflection_1.jpeg"),
+			expectedColor: "Off",
+		},
+		testImage{
+			path:          filepath.Join(testdataDir, "monitor_off_with_color_reflections.jpeg"),
+			expectedColor: "Off",
+		},
+		testImage{
+			path:          filepath.Join(testdataDir, "monitor_off_with_monitor_message_1.jpeg"),
+			expectedColor: "Off",
+		},
+		testImage{
+			path:          filepath.Join(testdataDir, "monitor_off_with_monitor_message.jpeg"),
+			expectedColor: "Off",
+		},
+		testImage{
+			path:          filepath.Join(testdataDir, "monitor_off_with_extreme_glare.jpeg"),
+			expectedColor: "Off",
+		},
 	}
 }
 
@@ -191,8 +203,8 @@ var hsvRanges = map[string]HSVRange{
 	"Red":   HSVRange{Min: HSV{H: 330, S: 0.45, V: 0.55}, Max: HSV{H: 30, S: 1.0, V: 1.0}},
 	"Green": HSVRange{Min: HSV{H: 90, S: 0.45, V: 0.55}, Max: HSV{H: 165, S: 1.0, V: 1.0}},
 	"Blue":  HSVRange{Min: HSV{H: 210, S: 0.45, V: 0.55}, Max: HSV{H: 270, S: 1.0, V: 1.0}},
-	// Off we are just looking at saturation and value.
-	"Off": HSVRange{Min: HSV{H: 0, S: 0.0, V: 0.0}, Max: HSV{H: 360, S: 0.40, V: 0.60}},
+	// Off we are just looking at value and ignoring hue and saturation
+	"Off": HSVRange{Min: HSV{H: 0, S: 0.0, V: 0.0}, Max: HSV{H: 360, S: 1.0, V: 0.60}},
 }
 
 func TestSimpleCheckDisplayColorHSV(t *testing.T) {
