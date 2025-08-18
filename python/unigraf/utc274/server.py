@@ -289,6 +289,7 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
             set_status = dev.hw.select_port(
                 arg=request.port_id, delay=constants.UTC_274_DELAY_S
             )
+            time.sleep(constants.UTC_274_STABILITY_S)
 
         dev.hw.update_port(delay=constants.UTC_274_DELAY_S)
 
@@ -303,14 +304,17 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
                 operator.attrgetter(port_state_api_clt)(dev)(
                     arg=1, delay=constants.UTC_274_DELAY_S
                 )
+                time.sleep(constants.UTC_274_STABILITY_S)
         elif request.state == usb_tester_service_pb2.PORT_STATE_ON:
             if not operator.attrgetter(port_state_api)(dev)(
                 delay=constants.UTC_274_DELAY_S
             ):
                 logging.info(f"Enabled port {request.port_id + 1}")
+                dev.dp.hpd_vdm_irq_control(delay=constants.UTC_274_DELAY_S)
                 operator.attrgetter(port_state_api_clt)(dev)(
                     arg=0, delay=constants.UTC_274_DELAY_S
                 )
+                time.sleep(constants.UTC_274_STABILITY_S)
 
         reply = usb_tester_service_pb2.SetActivePortReply(
             err_code=set_status,
@@ -333,7 +337,9 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
         with self._serial_locks[serial]:
             dev = self._open_devices[serial]
 
+            dev.dp.hpd_vdm_irq_control(delay=constants.UTC_274_DELAY_S)
             ret = dev.pd.replug()
+            time.sleep(constants.UTC_274_STABILITY_S)
 
         return usb_tester_service_pb2.DoCableReplugReply(
             err_code=ret,
@@ -372,6 +378,7 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
                 ret = dev.pd.soft_reset()
             else:
                 ret = dev.pd.hard_reset()
+                time.sleep(constants.UTC_274_STABILITY_S)
 
         return usb_tester_service_pb2.HardResetTesterReply(
             err_code=ret,

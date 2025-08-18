@@ -12,6 +12,7 @@ reporting.
 
 import argparse
 import logging
+import time
 import unittest
 
 from chromiumos.test.lab.api.passport import (
@@ -151,6 +152,27 @@ class TestUsbTesterActions(UsbTesterIntegrationTestBase):
         self.stub.SimulateKeyPress(
             usb_pb2.SimulateKeyPressRequest(id=self.tester_id)
         )
+
+    def test_port_stress(self):
+        """Tests the SetActivePort method by switching between ports.
+
+        This test iterates 20 times, switching between port 0 and 1,
+        and toggling the port state (ON/OFF) to simulate stress testing
+        on the USB tester ports.
+        """
+        for i in range(0, 20):
+            self.stub.SetActivePort(
+                usb_pb2.SetActivePortRequest(
+                    id=self.tester_id,
+                    port_id=i % 2,
+                    state=(
+                        usb_pb2.PORT_STATE_ON
+                        if i % 3
+                        else usb_pb2.PORT_STATE_OFF
+                    ),
+                )
+            )
+            time.sleep(5)
 
 
 def _create_capability_test_method(capability_enum_value):
