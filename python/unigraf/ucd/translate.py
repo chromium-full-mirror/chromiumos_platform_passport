@@ -13,6 +13,9 @@ from chromiumos.test.lab.api.passport import (
     video_tester_service_pb2 as video_pb2,
 )
 import UniTAP
+from UniTAP.dev.modules.dut_tests.dut_default_params import (
+    dp_1_4_source_general_tab,
+)
 
 
 # pylint: enable=import-error
@@ -31,58 +34,104 @@ TEST_UNITAP_TO_GRPC = {
     3: video_pb2.COMPLIANCE_TEST_ABORTED,
 }
 
+INTEL_COMMON_PARAMS_CTS_DUT_SRC = {
+    "default": {
+        "general.timeout": 5000,
+        "general.hpd_pulse_duration": 1000,
+        "general.dut_caps.max_lanes": 4,
+        "general.dut_caps.max_link_rate": 8.1,
+        "general.dut_caps.dut_caps_flags.voltage_swing_supported": True,
+        "general.dut_caps.dut_caps_flags.pre_emphasis_supported": True,
+        "general.dut_caps.dut_caps_flags.fixed_timing_dut_supported": False,
+        "general.dut_caps.dut_caps_flags.spread_spectrum_supported": False,
+        "general.dut_caps.dut_caps_flags.change_vf_without_lt_supported": True,
+        "general.dut_caps.dut_caps_flags.lane_count_reduction_without_lt_supported": False,
+        "general.dut_caps.dut_caps_flags.e_ddc_protocol_supported": True,
+        "general.dut_caps.dut_caps_flags.dut_is_type_c_device": True,
+        "general.dut_caps.dut_caps_flags.fec_supported": True,
+        "general.dut_caps.dut_caps_flags.fec_disable_sequence_supported": False,
+        "general.dut_caps.dut_caps_flags.audio_without_video_supported": True,
+        "general.dut_caps.dut_caps_flags.dsc_supported": False,
+        "general.dut_caps.dut_caps_flags.dsc_block_prediction_supported": False,
+        "general.test_automation.test_audio_pattern": False,
+        "general.test_automation.test_video_pattern": False,
+        "general.test_automation.test_edid_read": False,
+        "general.test_automation.test_link_training": False,
+    },
+    # Params can be overridden on a by model base. For example
+    # "redrix" : {
+    #   "general.timeout": 8000,
+    # }
+}
+
+INTEL_COMMON_PARAMS_DP_1_4_CTS_DUT_SRC = {
+    "default": {
+        **INTEL_COMMON_PARAMS_CTS_DUT_SRC["default"],
+        "general.test_automation.event_indication": dp_1_4_source_general_tab.EventIndication.AlwaysReady,
+    }
+}
+
+# For each test groups we have:
+# - default param class
+# - for each board that needs to support special params
+#    - the params to be set and their value
+#    - optional overrides for each model.
 TEST_GROUPS = {
     video_pb2.GROUP_HDMI_RX_CRC_TEST: {
         "group_id": UniTAP.TestGroupId.HDMI_RX_CRC,
-        "default_params": UniTAP.CrcVideoTestParam,
+        "default_param_class": UniTAP.CrcVideoTestParam,
     },
     video_pb2.GROUP_HDMI_RX_VRR_TEST: {
         "group_id": UniTAP.TestGroupId.HDMI_RX_VRR,
-        "default_params": UniTAP.VrrSourceDUTTestParam,
+        "default_param_class": UniTAP.VrrSourceDUTTestParam,
     },
     video_pb2.GROUP_HD_TX_CONTINUITY_TEST: {
         "group_id": UniTAP.TestGroupId.HD_TX_CONTINUITY,
-        "default_params": UniTAP.HdmiSinkContinuityDUTTestParam,
+        "default_param_class": UniTAP.HdmiSinkContinuityDUTTestParam,
     },
     video_pb2.GROUP_AUDIO_TEST: {
         "group_id": UniTAP.TestGroupId.AUDIO_TEST,
-        "default_params": UniTAP.AudioTestParam,
+        "default_param_class": UniTAP.AudioTestParam,
     },
     video_pb2.GROUP_PIXEL_LEVEL_VIDEO_TEST: {
         "group_id": UniTAP.TestGroupId.PIXEL_VIDEO_TEST,
-        "default_params": UniTAP.VideoPixelTestParam,
+        "default_param_class": UniTAP.VideoPixelTestParam,
     },
     video_pb2.GROUP_CRC_BASED_VIDEO_TEST: {
         "group_id": UniTAP.TestGroupId.DP_RX_CRC,
-        "default_params": UniTAP.CrcVideoTestParam,
+        "default_param_class": UniTAP.CrcVideoTestParam,
     },
     video_pb2.GROUP_LINK_TEST: {
         "group_id": UniTAP.TestGroupId.DP_RX_SIMPLE_LT,
-        "default_params": UniTAP.LinkConfigTestParam,
+        "default_param_class": UniTAP.LinkConfigTestParam,
     },
     video_pb2.GROUP_DISPLAYPORT_1_4_LINK_LAYER_CTS: {
         "group_id": UniTAP.TestGroupId.DP_RX_LL_CTS,
-        "default_params": UniTAP.Dp14SourceDUTTestParam,
+        "default_param_class": UniTAP.Dp14SourceDUTTestParam,
+        "brya": INTEL_COMMON_PARAMS_DP_1_4_CTS_DUT_SRC,
+        "fatcat": INTEL_COMMON_PARAMS_DP_1_4_CTS_DUT_SRC,
     },
     video_pb2.GROUP_DISPLAYPORT_1_4_DSC_LINK_LAYER_CTS: {
         "group_id": UniTAP.TestGroupId.DP_RX_LL_CTS_DSC,
-        "default_params": UniTAP.Dp14SourceDUTTestParam,
+        "default_param_class": UniTAP.Dp14SourceDUTTestParam,
     },
     video_pb2.GROUP_DISPLAYPORT_1_4_DISPLAYID_CTS_SOURCE_TEST: {
         "group_id": UniTAP.TestGroupId.DP_RX_DISPLAYID,
-        "default_params": UniTAP.Dp14SourceDUTTestParam,
+        "default_param_class": UniTAP.Dp14SourceDUTTestParam,
     },
     video_pb2.GROUP_DISPLAYPORT_2_1_LINK_LAYER_SOURCE_DUT_CTS: {
         "group_id": UniTAP.TestGroupId.DP_2_1_RX_LL_CTS,
-        "default_params": UniTAP.Dp21SourceDUTTestParam,
+        "default_param_class": UniTAP.Dp21SourceDUTTestParam,
+        "brya": INTEL_COMMON_PARAMS_CTS_DUT_SRC,
+        "fatcat": INTEL_COMMON_PARAMS_CTS_DUT_SRC,
     },
     video_pb2.GROUP_DISPLAYPORT_2_1_DSC_CTS_SOURCE_DUT: {
         "group_id": UniTAP.TestGroupId.DP_2_1_RX_DSC_CTS,
-        "default_params": UniTAP.Dp21SourceDUTTestParam,
+        "default_param_class": UniTAP.Dp21SourceDUTTestParam,
     },
     video_pb2.GROUP_DISPLAYPORT_2_1_DISPLAYID_CTS_SOURCE_TEST: {
         "group_id": UniTAP.TestGroupId.DP_2_1_RX_DISPAYID,
-        "default_params": UniTAP.Dp21SourceDUTTestParam,
+        "default_param_class": UniTAP.Dp21SourceDUTTestParam,
     },
 }
 

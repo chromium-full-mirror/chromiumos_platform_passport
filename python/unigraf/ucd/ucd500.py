@@ -66,6 +66,10 @@ class Ucd500Server(server.UcdServer):
             self._role.pdcrx.capabilities.set_initial_role(
                 UniTAP.pdc.PdcDeviceRole.UFP
             )
+            self._role.pdcrx.capabilities.cc_pull_up(
+                UniTAP.pdc.CCPullUp.Current_3A
+            )
+
             self._role.pdcrx.controls.reconnect()
             time.sleep(5)
 
@@ -135,6 +139,7 @@ class Ucd500Server(server.UcdServer):
 
         if isinstance(self._role, UniTAP.dev.UCD500.USBCSourceUSBCSink):
             self._role.pdcrx.controls.attach(request.attach)
+            self._role.dprx.link.set_assert_state(request.attach)
         else:
             raise RuntimeError(
                 f"Attach operation for role {self._role} is not implemented."

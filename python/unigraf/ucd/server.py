@@ -10,6 +10,7 @@ using the UniTAP library.
 """
 
 import atexit
+import functools
 import logging
 import re
 import tempfile
@@ -30,6 +31,18 @@ from utils import log_functionality
 
 
 # pylint: enable=import-error
+
+
+def rsetattr(obj, attr, val):
+    pre, _, post = attr.rpartition(".")
+    return setattr(rgetattr(obj, pre) if pre else obj, post, val)
+
+
+def rgetattr(obj, attr, *args):
+    def _getattr(obj, attr):
+        return getattr(obj, attr, *args)
+
+    return functools.reduce(_getattr, [obj] + attr.split("."))
 
 
 class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
@@ -154,13 +167,22 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
         self._role.dut_tests.clear_results()
         for test in request.tests:
             test_group = translate.TEST_GROUPS[test.group_id]
-            parameters = self._role.dut_tests.get_default_parameters(
-                test_group["default_params"]
+
+            test_params = self._role.dut_tests.get_default_parameters(
+                test_group["default_param_class"]
             )
+            if request.platform in test_group:
+                platform_params = test_group[request.platform]
+                for key, val in platform_params["default"].items():
+                    rsetattr(test_params, key, val)
+                if request.model in platform_params:
+                    for key, val in platform_params[request.model].items():
+                        rsetattr(test_params, key, val)
+
             self._role.dut_tests.run(
                 test_group["group_id"],
                 test.test_id,
-                parameters,
+                test_params,
             )
 
         i = 0
