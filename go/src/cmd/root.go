@@ -16,6 +16,7 @@ import (
 	"go.chromiumos.org/chromiumos/platform/passport/cmd/cameras"
 	"go.chromiumos.org/chromiumos/platform/passport/cmd/hid"
 	"go.chromiumos.org/chromiumos/platform/passport/cmd/switches"
+	"go.chromiumos.org/chromiumos/platform/passport/cmd/usb"
 	"go.chromiumos.org/chromiumos/platform/passport/server"
 )
 
@@ -53,6 +54,7 @@ func (r *rootCmd) Cmd() (*cobra.Command, error) {
 		switches.RootCmd(),
 		cameras.RootCmd(),
 		hid.RootCmd(),
+		usb.RootCmd(),
 	)
 
 	return cmd, nil
