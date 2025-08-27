@@ -13,6 +13,7 @@ import atexit
 import logging
 import re
 import tempfile
+import time
 
 # pylint: disable=import-error
 from chromiumos.test.lab.api.passport import (
@@ -192,7 +193,7 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
             )
 
     @log_functionality.logger
-    def LoadEdidVideoTester(self, request, context):
+    def LoadEdidVideoTester(self, request, _):
         """Loads the provided EDID data onto a given video tester."""
 
         self._check_serial_active(request.id)
@@ -210,14 +211,36 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
             path=tmp.name, load_on_device=True, stream=request.id_stream
         )
 
-        return video_pb2.LoadEdidVideoTesterResponse(success=(len(ret) != 0))
+        return video_pb2.LoadEdidVideoTesterResponse(success=len(ret) != 0)
 
     # Do not log the request as the screenshots can get very big.
-    def ScreenshotVideoTester(self, request, context):
+    def ScreenshotVideoTester(self, request, _):
         """Captures a screenshot from a specific stream of a video tester."""
 
         logging.info("Running ScreenshotVideoTester with args: %s", request)
         self._check_serial_active(request.id)
+
+        # Check current status and handle firmware bug where device gets stuck
+        current_status = self._port_rx.video_capturer.status
+        if current_status != UniTAP.VideoCaptureStatus.Idle:
+            logging.warning(
+                "Video capturer is not idle (status: %s), attempting to reset",
+                current_status,
+            )
+
+            # Force stop to clear any stuck state (firmware bug workaround)
+            try:
+                self._port_rx.video_capturer.stop()
+                logging.info("Forced stop completed")
+                time.sleep(0.2)
+
+                # Check status after forced stop
+                new_status = self._port_rx.video_capturer.status
+                logging.info("Status after forced stop: %s", new_status)
+
+            except Exception as e:
+                logging.warning("Forced stop failed: %s, proceeding anyway", e)
+                raise RuntimeError(f"Forced stop failed: {e}")
 
         self._port_rx.video_capturer.start(
             frames_count=1,
@@ -240,7 +263,7 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
             return video_pb2.ScreenshotVideoTesterResponse(screenshot=f.read())
 
     @log_functionality.logger
-    def GetStreamInfoVideoTester(self, request, context):
+    def GetStreamInfoVideoTester(self, request, _):
         """Get the current advanced link parameters for a given video tester."""
 
         self._check_serial_active(request.id)
