@@ -79,7 +79,7 @@ class UsbTesterIntegrationTestBase(unittest.TestCase):
             devices = cls.stub.GetTesters(usb_pb2.GetTestersRequest())
             logger.info("Discovered testers: %s", devices)
             if not devices.testers:
-                raise unittest.skipTest(
+                raise unittest.SkipTest(
                     "No USB testers found. Skipping all tests."
                 )
             cls.tester_id = devices.testers[0].id
@@ -92,12 +92,12 @@ class UsbTesterIntegrationTestBase(unittest.TestCase):
 
         except grpc.RpcError as e:
             logger.error("gRPC setup failed: %s", e.details())
-            raise unittest.skipTest(
+            raise unittest.SkipTest(
                 "Failed to connect or open tester: %s" % e.details()
             )
         except Exception as e:
             logger.error("Unexpected error during setup: %s", e)
-            raise unittest.skipTest("Unexpected error during setup: %s" % e)
+            raise unittest.SkipTest("Unexpected error during setup: %s" % e)
 
     @classmethod
     def tearDownClass(cls):
@@ -172,7 +172,6 @@ class TestUsbTesterActions(UsbTesterIntegrationTestBase):
                     ),
                 )
             )
-            time.sleep(5)
 
 
 def _create_capability_test_method(capability_enum_value):

@@ -88,6 +88,13 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
         self._serial_locks[serial] = threading.Lock()
         self._open_devices[serial] = dev
 
+        # Set the active CC when in ET cable mode to CC1
+        dev.pd.select_active_cc(
+            translate.GRCP_CAPABILITY_VALUE_MAP_SDK_VALUE[
+                (usb_tester_service_pb2.ACTIVE_CC, usb_tester_service_pb2.CC1)
+            ]
+        )
+
         logging.info(
             "Device FW: pdc %s, ms %s",
             dev.hw.pdc_version(),
@@ -141,14 +148,6 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
     def _capability_set(self, serial, attr, val):
         self._validate_serial_open(serial)
 
-        # TODO(b/435667490): ignore these calls as they are breaking the device.
-        # Unblock them once unigraf FW is updated.
-        if (
-            attr == usb_tester_service_pb2.CABLE_MODE
-            or attr == usb_tester_service_pb2.ACTIVE_CC
-        ):
-            return 0
-
         with self._serial_locks[serial]:
             dev = self._open_devices[serial]
             try:
@@ -193,6 +192,11 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
         This method is used to set the value for: dp pin assignment,
         active cc, power role, data role, usb channel, cable mode, init pd state
         """
+
+        if request.capability == usb_tester_service_pb2.CABLE_MODE:
+            return usb_tester_service_pb2.SetUsbTesterCapabilityReply(
+                err_code=0,
+            )
 
         to_set = translate.grcp_set_val_to_sdk_set_val(request)
         ret = self._capability_set(request.id, request.capability, to_set)
@@ -247,16 +251,13 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
         self._validate_serial_open(serial)
 
         dev = self._open_devices[serial]
-        update_stat = dev.hw.update_port(delay=constants.UTC_274_DELAY_S)
-        active_port = dev.hw.port()
+        update_stat = dev.hw.update_active_port(delay=constants.UTC_274_DELAY_S)
+        active_port = dev.hw.active_port()
 
-        port_state_api = f"hw.is_port_{active_port + 1}_enabled"
-        port_on = operator.attrgetter(port_state_api)(dev)(
-            delay=constants.UTC_274_DELAY_S
-        )
         port_state = usb_tester_service_pb2.PORT_STATE_NOT_SET
-        if port_on:
+        if active_port:
             port_state = usb_tester_service_pb2.PORT_STATE_ON
+            active_port = active_port - 1
         else:
             port_state = usb_tester_service_pb2.PORT_STATE_OFF
 
@@ -284,37 +285,25 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
 
         dev = self._open_devices[serial]
         set_status = 0
-        active_port = dev.hw.port()
-        if active_port != request.port_id:
-            set_status = dev.hw.select_port(
-                arg=request.port_id, delay=constants.UTC_274_DELAY_S
+        dev.hw.update_active_port()
+        active_port = dev.hw.active_port()
+
+        # TODO(b/441683499): rework this API so we don't have to do hacky things
+        # like this.
+        to_set = request.port_id + 1
+
+        if active_port != to_set:
+            logging.info(f"Set active port {to_set}")
+            set_status = dev.hw.select_active_port(
+                arg=to_set,
+                delay=constants.UTC_274_DELAY_S,
             )
             time.sleep(constants.UTC_274_STABILITY_S)
 
-        dev.hw.update_port(delay=constants.UTC_274_DELAY_S)
-
         time.sleep(1)
-        port_state_api = f"hw.is_port_{request.port_id + 1}_enabled"
-        port_state_api_clt = f"hw.toggle_port_{request.port_id + 1}"
         if request.state == usb_tester_service_pb2.PORT_STATE_OFF:
-            if operator.attrgetter(port_state_api)(dev)(
-                delay=constants.UTC_274_DELAY_S
-            ):
-                logging.info(f"Disabled port {request.port_id + 1}")
-                operator.attrgetter(port_state_api_clt)(dev)(
-                    arg=1, delay=constants.UTC_274_DELAY_S
-                )
-                time.sleep(constants.UTC_274_STABILITY_S)
-        elif request.state == usb_tester_service_pb2.PORT_STATE_ON:
-            if not operator.attrgetter(port_state_api)(dev)(
-                delay=constants.UTC_274_DELAY_S
-            ):
-                logging.info(f"Enabled port {request.port_id + 1}")
-                dev.dp.hpd_vdm_irq_control(delay=constants.UTC_274_DELAY_S)
-                operator.attrgetter(port_state_api_clt)(dev)(
-                    arg=0, delay=constants.UTC_274_DELAY_S
-                )
-                time.sleep(constants.UTC_274_STABILITY_S)
+            dev.hw.select_active_port(0)
+            time.sleep(constants.UTC_274_STABILITY_S)
 
         reply = usb_tester_service_pb2.SetActivePortReply(
             err_code=set_status,

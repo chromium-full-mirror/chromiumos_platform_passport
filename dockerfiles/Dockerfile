@@ -68,7 +68,7 @@ WORKDIR "/usr/local/bin/unigraf"
 COPY --from=apiconfig python/ chromiumos_apis
 COPY --from=passport python/ .
 
-ARG UTC274_SDK_VERSION=1.1.18.687
+ARG UTC274_SDK_VERSION=1.1.26.710
 ARG UCD500_SDK_VERSION=3.5.284.12136
 
 # Install the unigraf control dependencies and the chromiumos APIs.
