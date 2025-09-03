@@ -149,4 +149,13 @@ COPY --from=build /bin/cros-passport /bin/cros-passport
 COPY --from=go_licenses /third_party/ /third_party/
 COPY --from=python_licenses /third_party/ /third_party/
 
+ARG APICONFIG_COMMIT="APICONFIG_COMMIT:unknown"
+ARG PASSPORT_COMMIT="PASSPORT_COMMIT:unknown"
+ARG PASSPORT_BUILD_DATE="PASSPORT_BUILD_DATE:unknown"
+
+RUN echo "${APICONFIG_COMMIT}" > /build_info.txt && \
+    echo "${PASSPORT_COMMIT}" >> /build_info.txt && \
+    echo "${PASSPORT_BUILD_DATE}" >> /build_info.txt
+
+
 CMD ["/bin/cros-passport"]

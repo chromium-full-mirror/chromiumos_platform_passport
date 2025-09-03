@@ -5,6 +5,7 @@
 package cmd
 
 import (
+	"bufio"
 	"fmt"
 	"io"
 	"log/slog"
@@ -19,6 +20,8 @@ import (
 	"go.chromiumos.org/chromiumos/platform/passport/cmd/usb"
 	"go.chromiumos.org/chromiumos/platform/passport/server"
 )
+
+const BUILD_INFO_PATH string = "/build_info.txt"
 
 // runMode represents the mode to start the service in.
 type runMode int
@@ -81,6 +84,18 @@ func (r *rootCmd) persistentPreRun(cmd *cobra.Command, args []string) error {
 
 func (r *rootCmd) run(cmd *cobra.Command, args []string) error {
 	slog.Info("Starting passport", "args", cmd.Flags())
+
+	file, err := os.Open(BUILD_INFO_PATH)
+
+	// Don't fail server start if build info is missing.
+	if err == nil {
+		defer file.Close()
+
+		scanner := bufio.NewScanner(file)
+		for scanner.Scan() {
+			slog.Info("Build info: " + scanner.Text())
+		}
+	}
 
 	// If mode is server, then just serve in foreground and return when done.
 	s, err := server.InitializeGRPCServer(cmd.Context())
