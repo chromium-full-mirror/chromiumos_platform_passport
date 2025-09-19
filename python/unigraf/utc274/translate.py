@@ -235,8 +235,8 @@ NON_DISCRETE_CAPABILITIES = [
 # The values in this map are taken from the user manual,
 # section 6, pages 26 to 32.
 GRCP_CAPABILITY_SDK_VALUE_MAP_GRCP_VALUE = {
-    (usb_tester_service_pb2.ACTIVE_CC, 2): usb_tester_service_pb2.CC1,
-    (usb_tester_service_pb2.ACTIVE_CC, 3): usb_tester_service_pb2.CC2,
+    (usb_tester_service_pb2.ACTIVE_CC, 0): usb_tester_service_pb2.CC1,
+    (usb_tester_service_pb2.ACTIVE_CC, 1): usb_tester_service_pb2.CC2,
     (usb_tester_service_pb2.PIN_ASSIGNMENT, 0): usb_tester_service_pb2.C,
     (usb_tester_service_pb2.PIN_ASSIGNMENT, 1): usb_tester_service_pb2.D,
     (usb_tester_service_pb2.USB_CHANNEL, 0): usb_tester_service_pb2.USB_2_HS,
