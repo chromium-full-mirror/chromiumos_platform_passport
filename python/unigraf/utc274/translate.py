@@ -17,147 +17,118 @@ from chromiumos.test.lab.api.passport import usb_tester_service_pb2
 
 SDK_F_MAP = {
     usb_tester_service_pb2.PIN_ASSIGNMENT: [
-        "pd.dp_pin_assignment",
         "pd.update_dp_pin_assignment",
         "pd.select_dp_pin_assignment",
     ],
     usb_tester_service_pb2.USB_CHANNEL: [
-        "pd.usb_channel",
         "pd.update_usb_channel",
         "pd.select_usb_channel",
     ],
     usb_tester_service_pb2.POWER_ROLE: [
-        "pd.power_role",
         "pd.update_power_role",
         "pd.select_power_role",
     ],
     usb_tester_service_pb2.DATA_ROLE: [
-        "pd.data_role",
         "pd.update_data_role",
         "pd.select_data_role",
     ],
     usb_tester_service_pb2.ACTIVE_CC: [
-        "pd.active_cc",
         "pd.update_active_cc",
         "pd.select_active_cc",
     ],
     usb_tester_service_pb2.CABLE_MODE: [
-        "pd.cable_mode",
         "pd.update_cable_mode",
         "pd.select_cable_mode",
     ],
     usb_tester_service_pb2.INIT_PD_STATE: [
-        "pd.init_pd_state",
         "pd.update_init_pd_state",
         "pd.select_init_pd_state",
     ],
     usb_tester_service_pb2.CURRENT_LOAD: [
-        "pd.current_load",
         "pd.update_current_load",
         "pd.select_current_load",
     ],
     usb_tester_service_pb2.SRC_PULL_UP: [
-        "pd.src_cc_pull_up",
         "pd.update_src_pull_up",
         "pd.select_src_pull_up",
     ],
     usb_tester_service_pb2.SNK_PDO_COUNT: [
-        "pd.snk_pdo_count",
         "pd.update_snk_pdo_count",
         "pd.select_snk_pdo_count",
     ],
     usb_tester_service_pb2.SRC_PDO_COUNT: [
-        "pd.src_pdo_count",
         "pd.update_src_pdo_count",
         "pd.select_src_pdo_count",
     ],
     usb_tester_service_pb2.VBUS_VOLTAGE: [
-        "pd.vbus_voltage",
         "pd.update_vbus_voltage",
         "pd.select_vbus_voltage",
     ],
     usb_tester_service_pb2.VBUS_CURRENT: [
-        "pd.vbus_current",
         "pd.update_vbus_current",
         "pd.select_vbus_current",
     ],
     usb_tester_service_pb2.VBUS_CURRENT_LANE: [
-        "pd.vbus_per_lane_deviation",
         "pd.update_vbus_per_lane_deviation",
         "pd.select_vbus_per_lane_deviation",
     ],
     usb_tester_service_pb2.GND_CURRENT_LANE: [
-        "pd.gnd_per_lane_deviation",
         "pd.update_gnd_per_lane_deviation",
         "pd.select_gnd_per_lane_deviation",
     ],
     usb_tester_service_pb2.VBUS_EPU_VOLTAGE: [
-        "pd.vbus_epu_voltage",
         "pd.update_vbus_epu_voltage",
         "pd.select_vbus_epu_voltage",
     ],
     usb_tester_service_pb2.VBUS_CC1: [
-        "pd.cc1_voltage",
         "pd.update_cc1_voltage",
         "pd.select_cc1_voltage",
     ],
     usb_tester_service_pb2.VBUS_CC2: [
-        "pd.cc1_voltage",
         "pd.update_cc2_voltage",
         "pd.select_cc2_voltage",
     ],
     usb_tester_service_pb2.VBUS_SBU1: [
-        "pd.sbu1_voltage",
         "pd.update_sbu1_voltage",
         "pd.select_sbu1_voltage",
     ],
     usb_tester_service_pb2.VBUS_SBU2: [
-        "pd.sbu2_voltage",
         "pd.update_sbu2_voltage",
         "pd.select_sbu2_voltage",
     ],
     usb_tester_service_pb2.POWER_SWAP_POLICY: [
-        "pd.power_role_swap_policy",
         "pd.update_power_role_swap_policy",
         "pd.select_power_role_swap_policy",
     ],
     usb_tester_service_pb2.DATA_SWAP_POLICY: [
-        "pd.data_role_swap_policy",
         "pd.update_data_role_swap_policy",
         "pd.select_data_role_swap_policy",
     ],
     usb_tester_service_pb2.VCONN_SWAP_POLICY: [
-        "pd.vconn_swap_policy",
         "pd.update_vconn_swap_policy",
         "pd.select_vconn_swap_policy",
     ],
     usb_tester_service_pb2.CONSTRAINED_POWER: [
-        "hw.unconstrained_power_cap",
         "hw.update_unconstrained_power_cap",
         "hw.select_unconstrained_power_cap",
     ],
     usb_tester_service_pb2.POWER_DELIVERY: [
-        "hw.pd_cap",
         "hw.update_pd_cap",
         "hw.select_pd_cap",
     ],
     usb_tester_service_pb2.DISPLAY_PORT_AM: [
-        "hw.dp_alt_mode_cap",
         "hw.update_dp_alt_mode_cap",
         "hw.select_dp_alt_mode_cap",
     ],
     usb_tester_service_pb2.USB_PATH: [
-        "hw.usb_path",
         "hw.update_usb_path",
         "hw.select_usb_path",
     ],
     usb_tester_service_pb2.TRY_BEHAVIOUR: [
-        "pd.try_behavior",
         "pd.update_try_behavior",
         "pd.select_try_behavior",
     ],
     usb_tester_service_pb2.NON_PD_CURRENT: [
-        "pd.nonpd_current_load",
         "pd.update_nonpd_current_load",
         "pd.select_nonpd_current_load",
     ],

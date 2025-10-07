@@ -97,8 +97,8 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
 
         logging.info(
             "Device FW: pdc %s, ms %s",
-            dev.hw.pdc_version(),
-            dev.hw.ms_version(),
+            dev.pd_version,
+            dev.ms_version,
         )
 
         return usb_tester_service_pb2.OpenTesterReply(err_code=0, error_msg="")
@@ -131,14 +131,12 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
             dev = self._open_devices[serial]
             try:
                 get_f = operator.attrgetter(self.SDK_F_MAP[attr][0])(dev)
-                update_f = operator.attrgetter(self.SDK_F_MAP[attr][1])(dev)
             except Exception as e:
                 logging.error(
                     "An error occurred during device reflection: %s", str(e)
                 )
                 raise e
 
-            update_f(delay=constants.UTC_274_DELAY_S)
             val = get_f()
 
         return val
@@ -151,16 +149,14 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
         with self._serial_locks[serial]:
             dev = self._open_devices[serial]
             try:
-                set_f = operator.attrgetter(self.SDK_F_MAP[attr][2])(dev)
-                update_f = operator.attrgetter(self.SDK_F_MAP[attr][1])(dev)
+                set_f = operator.attrgetter(self.SDK_F_MAP[attr][1])(dev)
             except Exception as e:
                 logging.error(
                     "An error occurred during device reflection: %s", str(e)
                 )
                 raise e
 
-            ret = set_f(arg=val, delay=constants.UTC_274_DELAY_S)
-            update_f(delay=constants.UTC_274_DELAY_S)
+            ret = set_f(arg=val, delay_ms=constants.UTC_274_DELAY_MS)
 
             return ret
 
@@ -174,6 +170,9 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
 
         val = self._capability_get(request.id, request.capability)
         reply = usb_tester_service_pb2.GetUsbTesterCapabilityReply(err_code=0)
+        if val < 0:
+            reply.error_code = val
+            reply.error_msg = "Failed to get capability"
 
         # Set the field by looking at the name of the field
         # that was set in the get request.
@@ -210,17 +209,14 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
         serial = request.id
         self._validate_serial_open(serial)
 
-        ret = 0
         dp_val = {}
         with self._serial_locks[serial]:
             dev = self._open_devices[serial]
+            dp_val = dev.dp.update_dp_info()
 
-            ret = dev.dp.update_dp_info(delay=constants.UTC_274_DELAY_S)
-            dp_val = dev.dp.dp_info()
-
-        if ret != 0:
+        if dp_val < 0:
             return usb_tester_service_pb2.GetDpInfoReply(
-                err_code=ret, error_msg="Failed to update DP info in the SDK"
+                err_code=dp_val, error_msg="Failed to update DP info in the SDK"
             )
 
         reply = usb_tester_service_pb2.GetDpInfoReply(err_code=0)
@@ -251,8 +247,12 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
         self._validate_serial_open(serial)
 
         dev = self._open_devices[serial]
-        update_stat = dev.hw.update_active_port(delay=constants.UTC_274_DELAY_S)
-        active_port = dev.hw.active_port()
+        active_port = dev.hw.update_active_port()
+
+        if active_port < 0:
+            return usb_tester_service_pb2.GetActivePortReply(
+                err_code=active_port, error_msg="the SDK get port failed"
+            )
 
         port_state = usb_tester_service_pb2.PORT_STATE_NOT_SET
         if active_port:
@@ -263,14 +263,11 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
 
         # Build the reply. The UTC-274 has 2 test ports.
         reply = usb_tester_service_pb2.GetActivePortReply(
-            err_code=update_stat,
+            err_code=0,
             port_id=active_port,
             max_num_ports=2,
             state=port_state,
         )
-
-        if update_stat != 0:
-            reply.error_msg = "the SDK failed the update"
 
         return reply
 
@@ -285,8 +282,7 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
 
         dev = self._open_devices[serial]
         set_status = 0
-        dev.hw.update_active_port()
-        active_port = dev.hw.active_port()
+        active_port = dev.hw.update_active_port()
 
         # TODO(b/441683499): rework this API so we don't have to do hacky things
         # like this.
@@ -296,7 +292,7 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
             logging.info(f"Set active port {to_set}")
             set_status = dev.hw.select_active_port(
                 arg=to_set,
-                delay=constants.UTC_274_DELAY_S,
+                delay_ms=constants.UTC_274_DELAY_MS,
             )
             time.sleep(constants.UTC_274_STABILITY_S)
 
@@ -326,7 +322,7 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
         with self._serial_locks[serial]:
             dev = self._open_devices[serial]
 
-            dev.dp.hpd_vdm_irq_control(delay=constants.UTC_274_DELAY_S)
+            dev.dp.hpd_vdm_irq_control(delay_ms=constants.UTC_274_DELAY_MS)
             ret = dev.pd.replug()
             time.sleep(constants.UTC_274_STABILITY_S)
 
@@ -408,16 +404,15 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
         with self._serial_locks[serial]:
             dev = self._open_devices[serial]
 
-            ret = dev.pd.update_dut_pdo(delay=constants.UTC_274_DELAY_S)
-            sdk_pdos = dev.pd.dut_pdo()
+            sdk_pdos = dev.pd.update_dut_pdo()
             src_pdos = [
                 int.from_bytes(bytearray(pdo), byteorder="little", signed=False)
                 for pdo in sdk_pdos
             ]
 
             return usb_tester_service_pb2.GetPdosReply(
-                err_code=ret,
-                error_msg="Failed to update PDOs" if ret else "",
+                err_code=0,
+                error_msg="",
                 src_pdos=src_pdos,
             )
 
