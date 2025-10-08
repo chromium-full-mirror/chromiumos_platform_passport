@@ -103,7 +103,6 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
 
         return usb_tester_service_pb2.OpenTesterReply(err_code=0, error_msg="")
 
-    @log_functionality.logger
     def CloseTester(self, request, _context):
         """Free the device resources.
 
@@ -122,7 +121,6 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
         return usb_tester_service_pb2.CloseTesterReply(err_code=0, error_msg="")
 
     # TODO: add timeout and delay params
-    @log_functionality.logger
     def _capability_get(self, serial, attr):
         self._validate_serial_open(serial)
 
@@ -142,7 +140,6 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
         return val
 
     # TODO: add timeout and delay params
-    @log_functionality.logger
     def _capability_set(self, serial, attr, val):
         self._validate_serial_open(serial)
 
@@ -160,7 +157,6 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
 
             return ret
 
-    @log_functionality.logger
     def GetTesterCapability(self, request, _context):
         """This method retrieves various USB-C connection details.
 
@@ -184,7 +180,6 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
 
         return reply
 
-    @log_functionality.logger
     def SetTesterCapability(self, request, _context):
         """Manipulate unigraf's capabilities.
 
@@ -204,7 +199,6 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
             err_code=ret, error_msg=("set failed" if ret != 0 else "")
         )
 
-    @log_functionality.logger
     def GetDpInfo(self, request, _context):
         serial = request.id
         self._validate_serial_open(serial)
@@ -237,7 +231,6 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
 
         return reply
 
-    @log_functionality.logger
     def GetActivePort(self, request, _context):
         """Get details about the testing port.
 
@@ -271,7 +264,6 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
 
         return reply
 
-    @log_functionality.logger
     def SetActivePort(self, request, _context):
         """Manipulate the testing port.
 
@@ -308,7 +300,6 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
 
         return reply
 
-    @log_functionality.logger
     def ReplugCable(self, request, _context):
         """Simulate cable replug.
 
@@ -331,7 +322,6 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
             error_msg=("" if ret == 0 else "failed to do replug in the SDK"),
         )
 
-    @log_functionality.logger
     def HardResetTester(self, request, _context):
         """This method is used to do a hard reset."""
         serial = request.id
@@ -370,7 +360,6 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
             error_msg=("" if ret == 0 else "failed to do PD reset in the SDK"),
         )
 
-    @log_functionality.logger
     def LoadEdid(self, request, _context):
         """This method is used to load an EDID."""
 
@@ -395,7 +384,6 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
             err_code=ret, error_msg=("" if ret == 0 else "failed to load edid")
         )
 
-    @log_functionality.logger
     def GetPdos(self, request, _context):
         """This method is used to do a hard reset."""
         serial = request.id
@@ -416,7 +404,6 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
                 src_pdos=src_pdos,
             )
 
-    @log_functionality.logger
     def SendVdmHpd(self, request, context):
         """This method is used send a VDM HPDs."""
 
@@ -435,7 +422,6 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
                 error_msg="Failed to send vdm" if ret else "",
             )
 
-    @log_functionality.logger
     def SimulateKeyPress(self, request, context):
         """Simulate a key press. ATM this will simulate the "G" key press."""
         serial = request.id
@@ -452,7 +438,6 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
                 error_msg="Failed to simulate key G press" if ret else "",
             )
 
-    @log_functionality.logger
     def _validate_serial_open(self, serial):
         if serial not in self._open_devices:
             logging.info("Open devices are: %s", self._open_devices)
