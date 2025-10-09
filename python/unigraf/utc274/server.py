@@ -281,7 +281,8 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
         to_set = request.port_id + 1
 
         if active_port != to_set:
-            logging.info(f"Set active port {to_set}")
+            # TODO (b/450467364): remove this workaround when the FW fixes it.
+            dev.dp.hpd_vdm_irq_control(delay_ms=constants.UTC_274_DELAY_MS)
             set_status = dev.hw.select_active_port(
                 arg=to_set,
                 delay_ms=constants.UTC_274_DELAY_MS,
@@ -312,7 +313,7 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
         ret = 0
         with self._serial_locks[serial]:
             dev = self._open_devices[serial]
-
+            # TODO (b/450467364): remove this workaround when the FW fixes it.
             dev.dp.hpd_vdm_irq_control(delay_ms=constants.UTC_274_DELAY_MS)
             ret = dev.pd.replug()
             time.sleep(constants.UTC_274_STABILITY_S)
@@ -348,10 +349,11 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
         ret = 0
         with self._serial_locks[serial]:
             dev = self._open_devices[serial]
-
             if request.soft:
                 ret = dev.pd.soft_reset()
             else:
+                # TODO (b/450467364): remove this workaround when the FW fixes it.
+                dev.dp.hpd_vdm_irq_control(delay_ms=constants.UTC_274_DELAY_MS)
                 ret = dev.pd.hard_reset()
                 time.sleep(constants.UTC_274_STABILITY_S)
 
