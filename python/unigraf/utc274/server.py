@@ -440,6 +440,96 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
                 error_msg="Failed to simulate key G press" if ret else "",
             )
 
+    def SendPdAlert(self, request, context):
+        """Send a PD alert message to partner."""
+        serial = request.id
+        self._validate_serial_open(serial)
+
+        with self._serial_locks[serial]:
+            dev = self._open_devices[serial]
+            ret = dev.pd.extended_alert_message_event(
+                translate.GRCP_ALERT_TO_SDK_ALERT[request.pd_alert]
+            )
+
+        return usb_tester_service_pb2.SendPdAlertReply(err_code=ret)
+
+    def GetPdStats(self, request, context):
+        """Get statistics about the PD requests."""
+        serial = request.id
+        self._validate_serial_open(serial)
+
+        reply = usb_tester_service_pb2.GetPdStatsReply(err_code=0)
+        with self._serial_locks[serial]:
+            dev = self._open_devices[serial].pd
+
+            power_roles_spwas_stats = {
+                i: dev.update_power_role_swap_count(i.value)
+                for i in list(translate.PdSwapType)
+            }
+
+            reply.power_role_swap_count_allow = power_roles_spwas_stats[
+                translate.PdSwapType.ACCEPT
+            ]
+            reply.power_role_swap_count_reject = power_roles_spwas_stats[
+                translate.PdSwapType.REJECT
+            ]
+            reply.power_role_swap_count_wait = power_roles_spwas_stats[
+                translate.PdSwapType.WAIT
+            ]
+            reply.power_role_swap_count_total = sum(
+                [v for v in power_roles_spwas_stats.values() if v > 0]
+            )
+
+            data_roles_spwas_stats = {
+                i: dev.update_data_role_swap_count(i.value)
+                for i in list(translate.PdSwapType)
+            }
+            reply.data_role_swap_count_allow = data_roles_spwas_stats[
+                translate.PdSwapType.ACCEPT
+            ]
+            reply.data_role_swap_count_reject = data_roles_spwas_stats[
+                translate.PdSwapType.REJECT
+            ]
+            reply.data_role_swap_count_wait = data_roles_spwas_stats[
+                translate.PdSwapType.WAIT
+            ]
+            reply.data_role_swap_count_total = sum(
+                [v for v in data_roles_spwas_stats.values() if v > 0]
+            )
+
+            if (
+                sum(power_roles_spwas_stats.values())
+                != reply.power_role_swap_count_total
+                or sum(data_roles_spwas_stats.values())
+                != reply.data_role_swap_count_total
+            ):
+                reply.err_code = -1
+
+        return reply
+
+    def ResetPdStats(self, request, context):
+        """Reset the PD statistics."""
+        serial = request.id
+        self._validate_serial_open(serial)
+
+        sdk_err_code = 0
+        with self._serial_locks[serial]:
+            dev = self._open_devices[serial].pd
+            # In case the API call fails a negative error code will be returned.
+            data_role_resets = [
+                dev.reset_data_role_swap_count(i.value)
+                for i in list(translate.PdSwapType)
+            ]
+            power_role_resets = [
+                dev.reset_power_role_swap_count(i.value)
+                for i in list(translate.PdSwapType)
+            ]
+            sdk_err_code = min(min(data_role_resets), min(power_role_resets))
+
+        return usb_tester_service_pb2.GetPdStatsReply(
+            err_code=sdk_err_code,
+        )
+
     def _validate_serial_open(self, serial):
         if serial not in self._open_devices:
             logging.info("Open devices are: %s", self._open_devices)

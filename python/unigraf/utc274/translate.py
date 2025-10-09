@@ -8,6 +8,8 @@ This module translated between the SDK values used by the unigraf and the
 gRPC values.
 """
 
+from enum import Enum
+
 # pylint: disable=import-error
 from chromiumos.test.lab.api.passport import usb_tester_service_pb2
 
@@ -300,6 +302,19 @@ GRCP_CAPABILITY_VALUE_MAP_SDK_VALUE = {
     (usb_tester_service_pb2.TRY_BEHAVIOUR, usb_tester_service_pb2.TRY_SNK): 1,
     (usb_tester_service_pb2.TRY_BEHAVIOUR, usb_tester_service_pb2.TRY_SRC): 2,
 }
+
+# Map to convert the PD alert type in gRPC to the SDK value.
+GRCP_ALERT_TO_SDK_ALERT = {
+    usb_tester_service_pb2.PD_ALERT_PB_RELEASE: 0,
+    usb_tester_service_pb2.PD_ALERT_PB_PRESS: 1,
+}
+
+
+# Enum type to indicate the type of PD swaps for stats.
+class PdSwapType(Enum):
+    ACCEPT = 0
+    REJECT = 1
+    WAIT = 2
 
 
 def sdk_capability_to_reply_set_member(capability):

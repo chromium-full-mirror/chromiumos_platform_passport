@@ -384,3 +384,54 @@ func (s *usbTesterServiceServer) SimulateKeyPress(
 
 	return tester.SimulateKeyPress(ctx, req)
 }
+
+// Send a PD alert message to partner.
+func (s *usbTesterServiceServer) SendPdAlert(
+	ctx context.Context,
+	req *passport.SendPdAlertRequest,
+) (*passport.SendPdAlertReply, error) {
+
+	tester := s.testerMap[req.Id]
+	if tester == nil {
+		return nil, status.Errorf(
+			codes.NotFound,
+			fmt.Sprintf("there is no USB tester with id: %s", req.Id),
+		)
+	}
+
+	return tester.SendPdAlert(ctx, req)
+}
+
+// Get statistics about the PD requests.
+func (s *usbTesterServiceServer) GetPdStats(
+	ctx context.Context,
+	req *passport.GetPdStatsRequest,
+) (*passport.GetPdStatsReply, error) {
+
+	tester := s.testerMap[req.Id]
+	if tester == nil {
+		return nil, status.Errorf(
+			codes.NotFound,
+			fmt.Sprintf("there is no USB tester with id: %s", req.Id),
+		)
+	}
+
+	return tester.GetPdStats(ctx, req)
+}
+
+// Reset the PD statistics.
+func (s *usbTesterServiceServer) ResetPdStats(
+	ctx context.Context,
+	req *passport.ResetPdStatsRequest,
+) (*passport.ResetPdStatsReply, error) {
+
+	tester := s.testerMap[req.Id]
+	if tester == nil {
+		return nil, status.Errorf(
+			codes.NotFound,
+			fmt.Sprintf("there is no USB tester with id: %s", req.Id),
+		)
+	}
+
+	return tester.ResetPdStats(ctx, req)
+}

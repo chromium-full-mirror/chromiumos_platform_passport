@@ -223,3 +223,27 @@ func (s *usbTesterPlugin) SimulateKeyPress(
 
 	return s.unigraf_control_client.SimulateKeyPress(ctx, req)
 }
+
+// Send a PD alert message to partner.
+func (s *usbTesterPlugin) SendPdAlert(
+	ctx context.Context,
+	req *passport.SendPdAlertRequest,
+) (*passport.SendPdAlertReply, error) {
+	return s.unigraf_control_client.SendPdAlert(ctx, req)
+}
+
+// Get statistics about the PD requests.
+func (s *usbTesterPlugin) GetPdStats(
+	ctx context.Context,
+	req *passport.GetPdStatsRequest,
+) (*passport.GetPdStatsReply, error) {
+	return s.unigraf_control_client.GetPdStats(ctx, req)
+}
+
+// Reset the PD statistics.
+func (s *usbTesterPlugin) ResetPdStats(
+	ctx context.Context,
+	req *passport.ResetPdStatsRequest,
+) (*passport.ResetPdStatsReply, error) {
+	return s.unigraf_control_client.ResetPdStats(ctx, req)
+}
