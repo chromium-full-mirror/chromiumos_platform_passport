@@ -10,6 +10,43 @@
 
 set -euo pipefail
 
+# --- Self-Update Configuration ---
+# (No SCRIPT_VERSION needed if using SHA256)
+SCRIPT_URL="https://chromium.googlesource.com/chromiumos/platform/passport.git/+/refs/heads/main/scripts/passportd.sh?format=TEXT"
+# --- End Configuration ---
+
+# --- Robust Trap Handler ---
+declare -a EXIT_CLEANUP_CMDS=()
+
+#######################################
+# Adds a command to be run on script exit.
+# Globals:
+#   EXIT_CLEANUP_CMDS
+# Arguments:
+#   Command string to execute.
+#######################################
+add_to_cleanup() {
+  EXIT_CLEANUP_CMDS+=( "$@" )
+}
+
+#######################################
+# Executes all registered cleanup commands.
+# Globals:
+#   EXIT_CLEANUP_CMDS
+# Arguments:
+#   None
+#######################################
+cleanup_on_exit() {
+  for cmd in "${EXIT_CLEANUP_CMDS[@]}"; do
+    # Using eval to correctly handle commands with quoted paths
+    eval "${cmd}"
+  done
+}
+
+# Set the EXIT trap once.
+trap cleanup_on_exit EXIT
+# --- End Trap Handler ---
+
 readonly DOCKER_IMAGE_REPO="us-docker.pkg.dev/cros-passport/passport/passport"
 
 #######################################
@@ -98,6 +135,8 @@ install() {
 
   local tmp_dir
   tmp_dir=$(mktemp -d)
+  # Ensure temp directory is cleaned up on script exit
+  add_to_cleanup "rm -rf '${tmp_dir}'"
 
   local scripts_dir="${tmp_dir}/scripts"
   local dockerfiles_dir="${tmp_dir}/dockerfiles"
@@ -320,6 +359,72 @@ log() {
   docker exec "${container_id}" cat /tmp/cros-passport/log.txt
 }
 
+#######################################
+# Checks for updates to this script and applies them using SHA256.
+# Globals:
+#   SCRIPT_URL
+# Arguments:
+#   None
+#######################################
+update_script() {
+    echo "Checking for updates..."
+
+    if ! command -v sha256sum &> /dev/null; then
+        echo "Error: 'sha256sum' command not found. Cannot check for updates." >&2
+        return 1
+    fi
+
+    local SCRIPT_PATH
+    SCRIPT_PATH="${BASH_SOURCE[0]}"
+    if [[ ! -f "${SCRIPT_PATH}" ]]; then
+        echo "Error: Could not determine script path." >&2
+        exit 1
+    fi
+
+    # Calculate the hash of the currently running script
+    local local_hash
+    local_hash=$(sha256sum "${SCRIPT_PATH}" | awk '{print $1}')
+
+    local tmp_script
+    tmp_script=$(mktemp)
+
+    # Clean up temp file on exit
+    add_to_cleanup "rm -f '${tmp_script}'"
+
+    # Download and decode the latest script
+    echo "Downloading and decoding latest script..."
+    if ! curl -sL "${SCRIPT_URL}" | base64 -d > "${tmp_script}"; then
+        echo "Error: Failed to download or decode update." >&2
+        return 1
+    fi
+
+    # Calculate the hash of the downloaded script
+    local remote_hash
+    remote_hash=$(sha256sum "${tmp_script}" | awk '{print $1}')
+
+    # Compare the hashes
+    if [[ "${local_hash}" == "${remote_hash}" ]]; then
+        echo "Script is up to date (SHA: ${local_hash:0:12})."
+        return 0
+    fi
+
+    echo "New version available (SHA: ${remote_hash:0:12}). Updating from ${local_hash:0:12}..."
+
+    # Perform the update
+    chmod +x "${tmp_script}"
+
+    if ! cp "${tmp_script}" "${SCRIPT_PATH}"; then
+        echo "Error: Failed to overwrite script with new version." >&2
+        return 1
+    fi
+
+    echo "Update complete. Relaunching..."
+
+    # Relaunch to confirm the new version is now "up to date"
+    exec "${SCRIPT_PATH}" "update-script"
+    exit 0
+}
+
 # Prints the help message.
 help() {
   cat <<EOF
@@ -328,12 +433,13 @@ Usage: ${0} <command> [options]
 Manages the passport docker container.
 
 Commands:
-  install   Install the passport docker image.
-  status    Show the status of passport docker images and containers.
-  start     Start a new passport docker container.
-  stop      Stop a running passport docker container.
-  log       Show logs from a running passport container.
-  help      Show this help message.
+  install       Install the passport docker image.
+  status        Show the status of passport docker images and containers.
+  start         Start a new passport docker container.
+  stop          Stop a running passport docker container.
+  log           Show logs from a running passport container.
+  update-script Update this script to the latest version.
+  help          Show this help message.
 
 Options:
   --port <port>               (for start) Port to map to the container's port 8300.
@@ -366,6 +472,9 @@ main() {
       ;;
     log)
       log "${@}"
+      ;;
+    update-script)
+      update_script
       ;;
     help)
       help
