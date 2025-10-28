@@ -22,6 +22,7 @@ import sys
 from chromiumos.test.lab.api.passport import usb_tester_service_pb2_grpc
 from chromiumos.test.lab.api.passport import video_tester_service_pb2_grpc
 import grpc
+from metrics import telemetry
 from ucd import ucd422
 from ucd import ucd500
 from utc274 import fwupdate as utc274fwup
@@ -36,11 +37,18 @@ from utils import log_functionality
 
 @log_functionality.logger
 def serve(port, device_type, port_scan_pattern):
+    telemetry_interceptor = telemetry.GlobalMetricsInterceptor(
+        telemetry.MetricsService()
+    )
+
     server = grpc.server(
         futures.ThreadPoolExecutor(max_workers=10),
         options=[
             ("grpc.max_receive_message_length", 256 * 1024 * 1024),
             ("grpc.max_send_message_length", 256 * 1024 * 1024),
+        ],
+        interceptors=[
+            telemetry_interceptor,
         ],
     )
 

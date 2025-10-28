@@ -35,7 +35,7 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
     managing device connections, capabilities, and operations.
     """
 
-    @log_functionality.logger
+    # @log_functionality.logger
     def __init__(self):
         self._lib = UTCLibrary.UTCLib()
         # Read the device list on init. This eliminates the need of doing
@@ -43,7 +43,6 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
         self._raw_device = self._lib.devices_name_list()
         self._serial_locks = {}
         self._open_devices = {}
-
         self.SDK_F_MAP = translate.SDK_F_MAP
 
         logging.info("UsbTesterServiceServicer init done")
