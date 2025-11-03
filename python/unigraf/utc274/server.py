@@ -330,9 +330,10 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
 
         ret = 0
         with self._serial_locks[serial]:
-            dev = self._open_devices[serial]
-
-            ret = dev.sys_reboot()
+            # TODO (b/456712361): Temporarily disabled due to it breaking the PDC FW.
+            # dev = self._open_devices[serial]
+            # ret = dev.sys_reboot()
+            ret = 0
 
         return usb_tester_service_pb2.HardResetTesterReply(
             err_code=ret,
