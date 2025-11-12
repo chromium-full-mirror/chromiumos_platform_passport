@@ -91,8 +91,8 @@ func (s *videoTesterPlugin) Init() error {
 		unigrafAppURI,
 		grpc.WithInsecure(),
 		grpc.WithDefaultCallOptions(
-			grpc.MaxCallRecvMsgSize(64*1024*1024),
-			grpc.MaxCallSendMsgSize(64*1024*1024),
+			grpc.MaxCallRecvMsgSize(256*1024*1024),
+			grpc.MaxCallSendMsgSize(256*1024*1024),
 		),
 	)
 
