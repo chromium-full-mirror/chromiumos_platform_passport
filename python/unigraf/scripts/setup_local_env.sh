@@ -64,7 +64,7 @@ readonly DOCKERFILE_RELATIVE_PATH="../../../dockerfiles/Dockerfile"
 
 # Define default SDK version if parsing fails or Dockerfile is missing
 readonly DEFAULT_UT274_SDK_VERSION="1.1.11.673"
-readonly DEFAULT_UCD500_SDK_VERSION="3.5.284.12136"
+readonly DEFAULT_UCD500_SDK_VERSION="3.6.350.13545"
 
 # Variables to store parsed SDK versions
 UTC274_SDK_VERSION=""
