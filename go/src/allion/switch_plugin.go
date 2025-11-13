@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"time"
 
@@ -28,25 +29,29 @@ const (
 
 var (
 	// each switch model has a specific command needed to apply a state change
-	defaultPort = "default"
+	defaultPort       = "default"
+	maxTime     int64 = 9999999999
 
 	// switchCommands maps switch model ID to a command map for disabling and flipping that specific switch
-	switchCommands = map[string]commandMap{
-		"AUS19129": {SwitchDisabled: "0", SwitchFlip: "2"},
-		"AHS20079": {SwitchDisabled: "2"},
-		"AUS20019": {SwitchDisabled: "2"},
-		"ADT21090": {SwitchDisabled: "3"},
-		"XXRJ45SW": {SwitchDisabled: "2"},
-		"AUS22095": {SwitchDisabled: "3"},
-		"AHS24067": {SwitchDisabled: "3"},
-		"ADS24068": {SwitchDisabled: "3"},
+	switchCommands = map[string][]versionedCommand{
+		"AUS19129": {newVersionedCommand(maxTime, commandMap{SwitchDisabled: "0", SwitchFlip: "2"})},
+		"AHS20079": {newVersionedCommand(maxTime, commandMap{SwitchDisabled: "2"})},
+		"AUS20019": {
+			newVersionedCommand(2510269999, commandMap{SwitchDisabled: "2"}),
+			newVersionedCommand(maxTime, commandMap{SwitchDisabled: "6"}),
+		},
+		"ADT21090": {newVersionedCommand(maxTime, commandMap{SwitchDisabled: "3"})},
+		"XXRJ45SW": {newVersionedCommand(maxTime, commandMap{SwitchDisabled: "2"})},
+		"AUS22095": {newVersionedCommand(maxTime, commandMap{SwitchDisabled: "3"})},
+		"AHS24067": {newVersionedCommand(maxTime, commandMap{SwitchDisabled: "3"})},
+		"ADS24068": {newVersionedCommand(maxTime, commandMap{SwitchDisabled: "3"})},
 	}
 
 	// switchEnabledByPortIdCommands maps switch model ID to a command map for enabling that specific switch by port ID
 	switchEnabledByPortIdCommands = map[string]portCommandMap{
 		"AUS19129": {defaultPort: "1"},
 		"AHS20079": {defaultPort: "1"},
-		"AUS20019": {defaultPort: "1"},
+		"AUS20019": {defaultPort: "1", "A": "1", "B": "2"},
 		"ADT21090": {defaultPort: "1"},
 		"XXRJ45SW": {defaultPort: "1"},
 		"AUS22095": {defaultPort: "1", "A": "1", "B": "2"},
@@ -54,6 +59,15 @@ var (
 		"ADS24068": {defaultPort: "1"},
 	}
 )
+
+type versionedCommand struct {
+	maxTimestamp int64
+	commands     commandMap
+}
+
+func newVersionedCommand(timestamp int64, command commandMap) versionedCommand {
+	return versionedCommand{timestamp, command}
+}
 
 // Maps switch states to commands to be sent to the device.
 type commandMap map[passport.SwitchPortState]string
@@ -66,6 +80,7 @@ type switchInfo struct {
 	uid                  string
 	port                 string
 	model                string
+	version              int64
 	commands             commandMap
 	enableByPortCommands portCommandMap
 	lastCommand          string
@@ -298,10 +313,17 @@ func isAllionDevice(device string) (bool, *switchInfo) {
 	// For allion devices, serial is first 15 characters.
 	// Serials are case insensitive.
 	serial := strings.ToUpper(device[0:15])
+	versionStr := device[16:]
+	version, err := strconv.ParseInt(versionStr, 10, 64)
+	slog.Warn("Failed to parse version", "version string", versionStr, "error", err)
+	if err != nil {
+		return false, nil
+	}
 
 	// Model number is the first 8 characters of the serial.
 	model := serial[0:8]
-	if _, ok := switchCommands[model]; !ok {
+	commands, ok := getSwitchCommand(model, version)
+	if !ok {
 		return false, nil
 	}
 
@@ -314,7 +336,21 @@ func isAllionDevice(device string) (bool, *switchInfo) {
 	return true, &switchInfo{
 		uid:                  device[3:8] + device[13:15],
 		model:                model,
-		commands:             switchCommands[model],
+		version:              version,
+		commands:             commands,
 		enableByPortCommands: switchEnabledByPortIdCommands[model],
 	}
+}
+
+func getSwitchCommand(model string, version int64) (commandMap, bool) {
+	// Check each version, return the first version that ours is less than or equal to (lexicographically)
+	for _, versionedMap := range switchCommands[model] {
+		if version <= versionedMap.maxTimestamp {
+			return versionedMap.commands, true
+		}
+	}
+	if c, ok := switchCommands[model]; ok {
+		return c[0].commands, true
+	}
+	return nil, false
 }
