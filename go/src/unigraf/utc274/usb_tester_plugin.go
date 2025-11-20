@@ -9,14 +9,13 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
-	"os/exec"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
 	"go.chromium.org/chromiumos/config/go/test/lab/api/passport"
 	"go.chromiumos.org/chromiumos/platform/passport/server"
+	"go.chromiumos.org/chromiumos/platform/passport/utils"
 )
 
 // usbTesterPlugin is an unigraf usb tester plugin.
@@ -27,7 +26,7 @@ type usbTesterPlugin struct {
 const (
 	UNIGRAF_APP_PATH = "/bin/testerusbctl"
 	UNIGRAF_APP_ADDR = "localhost"
-	UNIGRAF_APP_PORT = 8081
+	UNIGRAF_APP_PORT = 0
 )
 
 func init() {
@@ -44,33 +43,26 @@ func (s *usbTesterPlugin) Init() error {
 		return nil
 	}
 
-	cmd := exec.Command(
+	// Call the helper
+	// We pass "0" to let the helper logic parse the resulting dynamic port
+	dynamicPort, cmd, err := utils.LaunchPythonBridgefAndGetPort(
 		UNIGRAF_APP_PATH,
-		"--port",
-		fmt.Sprintf("%d", UNIGRAF_APP_PORT),
-		"--device",
+		UNIGRAF_APP_PORT,
 		"UTC274",
 	)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf(
-			"failed to start unigraf control app err=%w path=%s port=%d",
-			err,
-			UNIGRAF_APP_PATH,
-			UNIGRAF_APP_PORT,
-		)
+
+	if err != nil {
+		return fmt.Errorf("failed to launch unigraf app: %w", err)
 	}
 
 	slog.Info(
-		"Started unigraf external controll app",
+		"Started unigraf external control app",
 		"path", UNIGRAF_APP_PATH,
-		"port", UNIGRAF_APP_PORT,
+		"port", dynamicPort,
 	)
 
-	// Build the unigraf control app URI and get a connection to the server.
-	unigrafAppURI := fmt.Sprintf("%s:%d", UNIGRAF_APP_ADDR, UNIGRAF_APP_PORT)
-	slog.Info("Unigraf control app is at", "uri", unigrafAppURI)
+	// Build URI and Dial
+	unigrafAppURI := fmt.Sprintf("%s:%d", UNIGRAF_APP_ADDR, dynamicPort)
 
 	conn, err := grpc.Dial(
 		unigrafAppURI,
@@ -78,6 +70,7 @@ func (s *usbTesterPlugin) Init() error {
 	)
 
 	if err != nil {
+		utils.KillPythonControl(cmd)
 		return fmt.Errorf("unigraf plugin didn't connect err=%w", err)
 	}
 

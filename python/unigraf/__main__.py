@@ -35,7 +35,7 @@ from utils import log_functionality
 
 
 @log_functionality.logger
-def serve(port, device_type):
+def serve(port, device_type, port_scan_pattern):
     server = grpc.server(
         futures.ThreadPoolExecutor(max_workers=10),
         options=[
@@ -59,10 +59,12 @@ def serve(port, device_type):
             ucd422.Ucd422Server(), server
         )
 
-    server.add_insecure_port(f"[::]:{port}")
-    server.start()
+    run_port = server.add_insecure_port(f"[::]:{port}")
 
-    logging.info("Server started, listening on %d", port)
+    server.start()
+    # Do not remove or change this line.
+    logging.info("%s:%d", port_scan_pattern, run_port)
+
     server.wait_for_termination()
 
 
@@ -91,6 +93,12 @@ if __name__ == "__main__":
         type=int,
         default=8787,
         help="The port on which to start the server",
+    )
+    parser.add_argument(
+        "--port-scan-pattern",
+        type=str,
+        default="PORT_BOUND",
+        help="Pattern to enable run port scanning by a parent app.",
     )
     parser.add_argument(
         "--log-level",
@@ -150,4 +158,4 @@ if __name__ == "__main__":
         args.fw_version,
     )
 
-    serve(args.port, args.device)
+    serve(args.port, args.device, args.port_scan_pattern)

@@ -20,7 +20,7 @@ import grpc
 
 
 @log_functionality.logger
-def serve(port):
+def serve(port, port_scan_pattern):
     server = grpc.server(
         futures.ThreadPoolExecutor(max_workers=10),
     )
@@ -28,10 +28,12 @@ def serve(port):
     switch_service_pb2_grpc.add_SwitchServiceServicer_to_server(
         switch_service.SwitchService(), server
     )
-    server.add_insecure_port(f"[::]:{port}")
-    server.start()
+    run_port = server.add_insecure_port(f"[::]:{port}")
 
-    logging.info("Server started, listening on %d", port)
+    server.start()
+    # Do not remove or change this line.
+    logging.info("%s:%d", port_scan_pattern, run_port)
+
     server.wait_for_termination()
 
 
@@ -43,6 +45,12 @@ if __name__ == "__main__":
         type=int,
         default=9494,
         help="The port on which to start the server",
+    )
+    parser.add_argument(
+        "--port-scan-pattern",
+        type=str,
+        default="PORT_BOUND",
+        help="Pattern to enable run port scanning by a parent app.",
     )
     parser.add_argument(
         "--log-level",
@@ -61,4 +69,4 @@ if __name__ == "__main__":
     args = parser.parse_args()
     log_functionality.configure_logging(args.log_path, args.log_level)
 
-    serve(args.port)
+    serve(args.port, args.port_scan_pattern)

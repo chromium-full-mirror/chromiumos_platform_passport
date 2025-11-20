@@ -9,20 +9,18 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
-	"os/exec"
 
 	"go.chromium.org/chromiumos/config/go/test/lab/api/passport"
 	"go.chromiumos.org/chromiumos/platform/passport/port"
 	"go.chromiumos.org/chromiumos/platform/passport/server"
+	"go.chromiumos.org/chromiumos/platform/passport/utils"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 )
 
 const (
 	APP_PATH = "/bin/acronamectl"
 	APP_ADDR = "localhost"
-	APP_PORT = 8084
+	APP_PORT = 0
 )
 
 // switchPlugin is an acroname switch plugin.
@@ -42,37 +40,47 @@ func init() {
 
 // Some testers require additional initialization to be done at a later time.
 func (s *switchPlugin) Init(ctx context.Context) error {
+	// Check if the plugin is already initialized. If so, log a warning and return nil.
 	if s.client != nil {
 		slog.Warn("Plugin is already initialized", "name", s.Name())
 		return nil
 	}
 
-	cmd := exec.CommandContext(ctx, APP_PATH, "--port", fmt.Sprintf("%d", APP_PORT))
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf(
-			"failed to start acroname control app err=%w path=%s port=%d",
-			err,
-			APP_PATH,
-			APP_PORT,
-		)
-	}
-
-	slog.Info("Started app", "path", APP_PATH, "port", APP_PORT)
-
-	// Build the acroname control app URI and get a connection to the server.
-	uri := fmt.Sprintf("%s:%d", APP_ADDR, APP_PORT)
-	slog.Info("acroname started at", "uri", uri)
-
-	conn, err := grpc.Dial(uri, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	// Call the helper
+	// We pass "0" to let the helper logic parse the resulting dynamic port
+	dynamicPort, cmd, err := utils.LaunchPythonBridgefAndGetPort(
+		APP_PATH,
+		APP_PORT,
+		"",
+	)
 
 	if err != nil {
+		return fmt.Errorf("failed to launch app: %w", err)
+	}
+
+	// Log that the control application has been started.
+	slog.Info(
+		"Started external controll app",
+		"path", APP_PATH,
+		"port", dynamicPort,
+	)
+
+	// Build the URI for connecting to the control application.
+	acronameAppURI := fmt.Sprintf("%s:%d", APP_PATH, dynamicPort)
+
+	// Establish a gRPC connection to the control application.
+	conn, err := grpc.Dial(
+		acronameAppURI,
+		grpc.WithInsecure(),
+	)
+
+	if err != nil {
+		utils.KillPythonControl(cmd)
 		return fmt.Errorf("acroname plugin didn't connect err=%w", err)
 	}
 
 	s.client = passport.NewSwitchServiceClient(conn)
-	slog.Info("acroname switch plugin initialized.")
+	slog.Info("Acroname switch plugin initialized.")
 
 	return nil
 }

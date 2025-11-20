@@ -9,13 +9,12 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
-	"os/exec"
 
 	"google.golang.org/grpc"
 
 	"go.chromium.org/chromiumos/config/go/test/lab/api/passport"
 	"go.chromiumos.org/chromiumos/platform/passport/server"
+	"go.chromiumos.org/chromiumos/platform/passport/utils"
 )
 
 // videoTesterPlugin implements the passport.VideoTesterPlugin interface
@@ -33,7 +32,7 @@ const (
 	// UNIGRAF_APP_ADDR is the network address where the Unigraf control application listens.
 	UNIGRAF_APP_ADDR = "localhost"
 	// UNIGRAF_APP_PORT is the network port where the Unigraf control application listens.
-	UNIGRAF_APP_PORT = 8083
+	UNIGRAF_APP_PORT = 0
 )
 
 // init registers this plugin with the Passport server during package initialization.
@@ -54,37 +53,27 @@ func (s *videoTesterPlugin) Init() error {
 		return nil
 	}
 
-	// Construct the command to start the external Unigraf control application.
-	cmd := exec.Command(
+	// Call the helper
+	// We pass "0" to let the helper logic parse the resulting dynamic port
+	dynamicPort, cmd, err := utils.LaunchPythonBridgefAndGetPort(
 		UNIGRAF_APP_PATH,
-		"--port",
-		fmt.Sprintf("%d", UNIGRAF_APP_PORT),
-		"--device",
+		UNIGRAF_APP_PORT,
 		"UCD422",
 	)
-	// Redirect the standard output and error of the command to the current process's output.
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	// Start the Unigraf control application.
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf(
-			"failed to start unigraf control app err=%w path=%s port=%d",
-			err,
-			UNIGRAF_APP_PATH,
-			UNIGRAF_APP_PORT,
-		)
+
+	if err != nil {
+		return fmt.Errorf("failed to launch unigraf app: %w", err)
 	}
 
 	// Log that the Unigraf control application has been started.
 	slog.Info(
 		"Started unigraf external controll app",
 		"path", UNIGRAF_APP_PATH,
-		"port", UNIGRAF_APP_PORT,
+		"port", dynamicPort,
 	)
 
 	// Build the URI for connecting to the Unigraf control application.
-	unigrafAppURI := fmt.Sprintf("%s:%d", UNIGRAF_APP_ADDR, UNIGRAF_APP_PORT)
-	slog.Info("Unigraf control app is at", "uri", unigrafAppURI)
+	unigrafAppURI := fmt.Sprintf("%s:%d", UNIGRAF_APP_ADDR, dynamicPort)
 
 	// Establish a gRPC connection to the Unigraf control application.
 	conn, err := grpc.Dial(
@@ -96,8 +85,8 @@ func (s *videoTesterPlugin) Init() error {
 		),
 	)
 
-	// Handle any errors that occur during the gRPC connection attempt.
 	if err != nil {
+		utils.KillPythonControl(cmd)
 		return fmt.Errorf("unigraf plugin didn't connect err=%w", err)
 	}
 
