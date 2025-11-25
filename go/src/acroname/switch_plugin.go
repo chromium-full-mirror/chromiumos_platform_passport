@@ -66,7 +66,7 @@ func (s *switchPlugin) Init(ctx context.Context) error {
 	)
 
 	// Build the URI for connecting to the control application.
-	acronameAppURI := fmt.Sprintf("%s:%d", APP_PATH, dynamicPort)
+	acronameAppURI := fmt.Sprintf("%s:%d", APP_ADDR, dynamicPort)
 
 	// Establish a gRPC connection to the control application.
 	conn, err := grpc.Dial(
