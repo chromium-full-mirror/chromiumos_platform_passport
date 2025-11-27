@@ -105,11 +105,10 @@ class MetricsService:
         This method will not raise an exception if the counter
         is not initialized or if the .add() call fails.
         """
+        # No open telemetry exporter was found, don't log anything.
         if self.request_counter is None:
-            logging.warning(
-                "MetricsService: Cannot record request, counter is not initialized."
-            )
             return
+
         try:
             attributes = {
                 "rpc.method": method_name,
