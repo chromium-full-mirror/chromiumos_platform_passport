@@ -212,6 +212,7 @@ GRCP_CAPABILITY_SDK_VALUE_MAP_GRCP_VALUE = {
     (usb_tester_service_pb2.ACTIVE_CC, 1): usb_tester_service_pb2.CC2,
     (usb_tester_service_pb2.PIN_ASSIGNMENT, 0): usb_tester_service_pb2.C,
     (usb_tester_service_pb2.PIN_ASSIGNMENT, 1): usb_tester_service_pb2.D,
+    (usb_tester_service_pb2.PIN_ASSIGNMENT, 2): usb_tester_service_pb2.E,
     (usb_tester_service_pb2.USB_CHANNEL, 0): usb_tester_service_pb2.USB_2_HS,
     (
         usb_tester_service_pb2.USB_CHANNEL,
@@ -226,12 +227,38 @@ GRCP_CAPABILITY_SDK_VALUE_MAP_GRCP_VALUE = {
     (usb_tester_service_pb2.INIT_PD_STATE, 0): usb_tester_service_pb2.PD_UFP,
     (usb_tester_service_pb2.INIT_PD_STATE, 1): usb_tester_service_pb2.PD_DFP,
     (usb_tester_service_pb2.INIT_PD_STATE, 2): usb_tester_service_pb2.PD_DRP,
-    (usb_tester_service_pb2.DATA_SWAP_POLICY, 1): True,
-    (usb_tester_service_pb2.DATA_SWAP_POLICY, 0): False,
-    (usb_tester_service_pb2.POWER_SWAP_POLICY, 1): True,
-    (usb_tester_service_pb2.POWER_SWAP_POLICY, 0): False,
-    (usb_tester_service_pb2.VCONN_SWAP_POLICY, 1): True,
-    (usb_tester_service_pb2.VCONN_SWAP_POLICY, 0): False,
+    (
+        usb_tester_service_pb2.DATA_SWAP_POLICY,
+        0,
+    ): usb_tester_service_pb2.PD_SWAP_POLICY_ALLOW,
+    (
+        usb_tester_service_pb2.DATA_SWAP_POLICY,
+        1,
+    ): usb_tester_service_pb2.PD_SWAP_POLICY_REJECT,
+    (
+        usb_tester_service_pb2.DATA_SWAP_POLICY,
+        2,
+    ): usb_tester_service_pb2.PD_SWAP_POLICY_WAIT,
+    (
+        usb_tester_service_pb2.POWER_SWAP_POLICY,
+        0,
+    ): usb_tester_service_pb2.PD_SWAP_POLICY_ALLOW,
+    (
+        usb_tester_service_pb2.POWER_SWAP_POLICY,
+        1,
+    ): usb_tester_service_pb2.PD_SWAP_POLICY_REJECT,
+    (
+        usb_tester_service_pb2.POWER_SWAP_POLICY,
+        2,
+    ): usb_tester_service_pb2.PD_SWAP_POLICY_WAIT,
+    (
+        usb_tester_service_pb2.VCONN_SWAP_POLICY,
+        0,
+    ): usb_tester_service_pb2.PD_SWAP_POLICY_ALLOW,
+    (
+        usb_tester_service_pb2.VCONN_SWAP_POLICY,
+        1,
+    ): usb_tester_service_pb2.PD_SWAP_POLICY_REJECT,
     (usb_tester_service_pb2.CONSTRAINED_POWER, 1): True,
     (usb_tester_service_pb2.CONSTRAINED_POWER, 0): False,
     (usb_tester_service_pb2.POWER_DELIVERY, 1): True,
@@ -261,6 +288,7 @@ GRCP_CAPABILITY_VALUE_MAP_SDK_VALUE = {
     (usb_tester_service_pb2.ACTIVE_CC, usb_tester_service_pb2.CC2): 3,
     (usb_tester_service_pb2.PIN_ASSIGNMENT, usb_tester_service_pb2.C): 0,
     (usb_tester_service_pb2.PIN_ASSIGNMENT, usb_tester_service_pb2.D): 1,
+    (usb_tester_service_pb2.PIN_ASSIGNMENT, usb_tester_service_pb2.E): 2,
     (usb_tester_service_pb2.USB_CHANNEL, usb_tester_service_pb2.USB_2_HS): 0,
     (
         usb_tester_service_pb2.USB_CHANNEL,
@@ -275,12 +303,38 @@ GRCP_CAPABILITY_VALUE_MAP_SDK_VALUE = {
     (usb_tester_service_pb2.INIT_PD_STATE, usb_tester_service_pb2.PD_UFP): 0,
     (usb_tester_service_pb2.INIT_PD_STATE, usb_tester_service_pb2.PD_DFP): 1,
     (usb_tester_service_pb2.INIT_PD_STATE, usb_tester_service_pb2.PD_DRP): 2,
-    (usb_tester_service_pb2.DATA_SWAP_POLICY, True): 0,
-    (usb_tester_service_pb2.DATA_SWAP_POLICY, False): 1,
-    (usb_tester_service_pb2.POWER_SWAP_POLICY, True): 0,
-    (usb_tester_service_pb2.POWER_SWAP_POLICY, False): 1,
-    (usb_tester_service_pb2.VCONN_SWAP_POLICY, True): 0,
-    (usb_tester_service_pb2.VCONN_SWAP_POLICY, False): 1,
+    (
+        usb_tester_service_pb2.DATA_SWAP_POLICY,
+        usb_tester_service_pb2.PD_SWAP_POLICY_ALLOW,
+    ): 0,
+    (
+        usb_tester_service_pb2.DATA_SWAP_POLICY,
+        usb_tester_service_pb2.PD_SWAP_POLICY_REJECT,
+    ): 1,
+    (
+        usb_tester_service_pb2.DATA_SWAP_POLICY,
+        usb_tester_service_pb2.PD_SWAP_POLICY_WAIT,
+    ): 2,
+    (
+        usb_tester_service_pb2.POWER_SWAP_POLICY,
+        usb_tester_service_pb2.PD_SWAP_POLICY_ALLOW,
+    ): 0,
+    (
+        usb_tester_service_pb2.POWER_SWAP_POLICY,
+        usb_tester_service_pb2.PD_SWAP_POLICY_REJECT,
+    ): 1,
+    (
+        usb_tester_service_pb2.POWER_SWAP_POLICY,
+        usb_tester_service_pb2.PD_SWAP_POLICY_WAIT,
+    ): 2,
+    (
+        usb_tester_service_pb2.VCONN_SWAP_POLICY,
+        usb_tester_service_pb2.PD_SWAP_POLICY_ALLOW,
+    ): 0,
+    (
+        usb_tester_service_pb2.VCONN_SWAP_POLICY,
+        usb_tester_service_pb2.PD_SWAP_POLICY_REJECT,
+    ): 1,
     (usb_tester_service_pb2.CONSTRAINED_POWER, True): 1,
     (usb_tester_service_pb2.CONSTRAINED_POWER, False): 0,
     (usb_tester_service_pb2.POWER_DELIVERY, True): 1,
