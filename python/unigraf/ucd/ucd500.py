@@ -10,6 +10,7 @@ using the UniTAP library.
 """
 
 import logging
+import tempfile
 import time
 
 # pylint: disable=import-error
@@ -169,3 +170,81 @@ class Ucd500Server(server.UcdServer):
         caps = self._port_rx.link.capabilities.link_caps_status()
 
         return caps.mst_sink_count if caps.mst else 1
+
+    @log_functionality.logger
+    def StartEventCapture(self, request, context):
+        """Start the event capture with the specified filters"""
+
+        event_config_tx = self._port_tx.event_capturer.event_filter(
+            UniTAP.EventFilterDpTx
+        )
+        event_config_rx = self._port_rx.event_capturer.event_filter(
+            UniTAP.EventFilterDpRx
+        )
+
+        event_config_rx.config_hpd_events(request.dprx_config.hpd_events)
+        event_config_rx.config_aux_events(request.dprx_config.aux_events)
+        event_config_rx.config_sdp_events(request.dprx_config.sdp_events)
+        event_config_rx.config_link_pattern_events(
+            request.dprx_config.link_pattern_events
+        )
+        event_config_rx.config_vb_id_events(request.dprx_config.vb_id_events)
+        event_config_rx.config_msa_events(request.dprx_config.msa_events)
+        event_config_rx.config_aux_bw_events(request.dprx_config.aux_bw_events)
+
+        event_config_tx.config_hpd_events(request.dptx_config.hpd_events)
+        event_config_tx.config_aux_events(request.dptx_config.aux_events)
+
+        # Stop any capture in case they are still running.
+        self._port_tx.event_capturer.stop()
+        self._port_rx.event_capturer.stop()
+
+        self._port_tx.event_capturer.configure_capturer(event_config_tx)
+        self._port_rx.event_capturer.configure_capturer(event_config_rx)
+
+        self._port_tx.event_capturer.start()
+        self._port_rx.event_capturer.start()
+
+        return video_pb2.StartEventCaptureResponse()
+
+    def StopEventCapture(self, request, context):
+        """Stop the event capture and optionally get the capture files."""
+
+        logging.info("Running StopEventCapture")
+
+        self._port_tx.event_capturer.stop()
+        self._port_rx.event_capturer.stop()
+
+        capture_result_tx = (
+            self._port_tx.event_capturer.pop_all_elements_as_result_object()
+        )
+        capture_result_rx = (
+            self._port_rx.event_capturer.pop_all_elements_as_result_object()
+        )
+
+        logging.info(
+            f"StopEventCapture results are {len(capture_result_tx.buffer)} {len(capture_result_rx.buffer)}"
+        )
+
+        # Generate reports only if requested.
+        if not request.generate_reports:
+            return video_pb2.StopEventCaptureResponse()
+
+        # pylint: disable=R1732
+        tmp_tx = tempfile.NamedTemporaryFile(suffix=".html")
+        tmp_rx = tempfile.NamedTemporaryFile(suffix=".html")
+        # pylint: enable=R1732
+
+        capture_result_tx.save_to_file_all_events(
+            file_format=UniTAP.EventFileFormat.HTML, path=tmp_tx.name
+        )
+        capture_result_rx.save_to_file_all_events(
+            file_format=UniTAP.EventFileFormat.HTML, path=tmp_rx.name
+        )
+
+        with open(tmp_tx.name, "rb") as f_tx, open(tmp_rx.name, "rb") as f_rx:
+            logging.info("Files were found")
+            return video_pb2.StopEventCaptureResponse(
+                dptx_capture_html=f_tx.read(),
+                dprx_capture_html=f_rx.read(),
+            )

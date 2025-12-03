@@ -219,3 +219,21 @@ func (s *videoTesterPlugin) RunComplianceTest(
 	// Call the AttachVideoTester method of the found plugin.
 	return s.unigraf_control_client.RunComplianceTest(ctx, req)
 }
+
+// Runs StartEventCapture.
+func (s *videoTesterPlugin) StartEventCapture(
+	ctx context.Context,
+	req *passport.StartEventCaptureRequest,
+) (*passport.StartEventCaptureResponse, error) {
+	// Call the StartEventCapture method of the found plugin.
+	return s.unigraf_control_client.StartEventCapture(ctx, req)
+}
+
+// Runs StopEventCapture.
+func (s *videoTesterPlugin) StopEventCapture(
+	ctx context.Context,
+	req *passport.StopEventCaptureRequest,
+) (*passport.StopEventCaptureResponse, error) {
+	// Call the StopEventCapture method of the found plugin.
+	return s.unigraf_control_client.StopEventCapture(ctx, req)
+}

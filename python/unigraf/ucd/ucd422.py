@@ -141,6 +141,21 @@ class Ucd422Server(server.UcdServer):
         return video_pb2.HpdPulseVideoTesterResponse()
 
     @log_functionality.logger
+    def StartEventCapture(self, request, context):
+        """Start the event capture with the specified filters"""
+
+        logging.info("NoOp StartEventCapture")
+
+        return video_pb2.StartEventCaptureResponse()
+
+    @log_functionality.logger
+    def StopEventCapture(self, request, context):
+        """Stop the event capture and optionally get the capture files."""
+
+        logging.info("NoOp StopEventCapture")
+        return video_pb2.StopEventCaptureResponse()
+
+    @log_functionality.logger
     def _get_number_of_video_streams(self):
         if self._port_rx.link.status.hpd_status:
             return 1

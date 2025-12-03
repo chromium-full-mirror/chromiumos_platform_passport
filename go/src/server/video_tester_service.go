@@ -372,3 +372,39 @@ func (s *videoTesterServiceServer) RunComplianceTest(
 	// Call the AttachVideoTester method of the found plugin.
 	return tester.RunComplianceTest(ctx, req)
 }
+
+// Runs StartEventCapture.
+func (s *videoTesterServiceServer) StartEventCapture(
+	ctx context.Context,
+	req *passport.StartEventCaptureRequest,
+) (*passport.StartEventCaptureResponse, error) {
+
+	if tester, ok := s.testerMap[req.Id]; ok {
+		// Call the StartEventCapture method of the found plugin.
+		return tester.StartEventCapture(ctx, req)
+	}
+
+	// If no plugin is found for the given ID, return a NotFound error.
+	return nil, status.Errorf(
+		codes.NotFound,
+		fmt.Sprintf("there is no tester with id: %s", req.Id),
+	)
+}
+
+// Runs StopEventCapture.
+func (s *videoTesterServiceServer) StopEventCapture(
+	ctx context.Context,
+	req *passport.StopEventCaptureRequest,
+) (*passport.StopEventCaptureResponse, error) {
+
+	if tester, ok := s.testerMap[req.Id]; ok {
+		// Call the StartEventCapture method of the found plugin.
+		return tester.StopEventCapture(ctx, req)
+	}
+
+	// If no plugin is found for the given ID, return a NotFound error.
+	return nil, status.Errorf(
+		codes.NotFound,
+		fmt.Sprintf("there is no tester with id: %s", req.Id),
+	)
+}

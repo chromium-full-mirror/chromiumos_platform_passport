@@ -92,6 +92,14 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
         """Simulates attaching/detaching."""
         raise NotImplementedError("Method not implemented!")
 
+    def StartEventCapture(self, request, context):
+        """Start the event capture with the specified filters"""
+        raise NotImplementedError("Method not implemented!")
+
+    def StopEventCapture(self, request, context):
+        """Stop the event capture and optionally get the capture files."""
+        raise NotImplementedError("Method not implemented!")
+
     def _get_number_of_video_streams(self):
         raise RuntimeError("Method is not implemented!")
 
