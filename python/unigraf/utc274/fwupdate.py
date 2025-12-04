@@ -66,7 +66,7 @@ class Utc274FwUpdater:
             constants.UTC_274_FIRMWARE_BASE_LINK,
             fw_name,
         )
-        path = self._fw_blob_path + fw_name.removeprefix("utc274_")
+        path = self._fw_blob_path + self._get_clean_fw_name(fw_name)
         self._download_firmware(fw_url, path)
         self._check_file_hash(path, fw_checksum)
 
@@ -87,6 +87,15 @@ class Utc274FwUpdater:
                     f"Hash for file {path} is {actual}, expected {expected}"
                 )
             logging.info("Hashes for file %s match.", path)
+
+    def _get_clean_fw_name(self, fw_name):
+        prefix_clear_name = fw_name.removeprefix("utc274_")
+
+        head, sep, tail = prefix_clear_name.rpartition("_")
+        if sep == "_" and tail.isdigit():
+            return head
+
+        return prefix_clear_name
 
     @log_functionality.logger
     def update_all_devices(self):
