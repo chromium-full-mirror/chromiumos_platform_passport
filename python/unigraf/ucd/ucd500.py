@@ -82,6 +82,27 @@ class Ucd500Server(server.UcdServer):
         self._check_serial_active(request.id)
         caps = self._role.dprx.link.capabilities.link_caps_status()
 
+        if request.HasField("video_spec"):
+            rates = []
+            if video_pb2.DP_128_BITRATE_10_0 in request.dp_128_bitrates:
+                rates.append(10.0)
+            if video_pb2.DP_128_BITRATE_13_5 in request.dp_128_bitrates:
+                rates.append(13.5)
+            if video_pb2.DP_128_BITRATE_20_0 in request.dp_128_bitrates:
+                rates.append(20.0)
+
+            if not rates:
+                rates = [10.0, 13.5, 20.0]
+
+            if request.video_spec in [
+                video_pb2.VIDEO_SPECIFICATION_DP_2_0,
+                video_pb2.VIDEO_SPECIFICATION_DP_2_1,
+            ]:
+                caps.dp_128_132_bitrates = rates
+            else:
+                # Disable dp 2+. Ignore all rates if they were set.
+                caps.dp_128_132_bitrates = []
+
         if request.HasField("mst"):
             caps.mst = request.mst
 
@@ -129,6 +150,18 @@ class Ucd500Server(server.UcdServer):
         link_info.fec = caps.fec
         link_info.tps4 = caps.tps4
         link_info.tps3 = caps.tps3
+
+        if caps.dp_128_132_bitrates:
+            link_info.video_spec = video_pb2.VIDEO_SPECIFICATION_DP_2_1
+            if 10.0 in caps.dp_128_132_bitrates:
+                link_info.dp_128_bitrates.append(video_pb2.DP_128_BITRATE_10_0)
+            if 13.5 in caps.dp_128_132_bitrates:
+                link_info.dp_128_bitrates.append(video_pb2.DP_128_BITRATE_13_5)
+            if 20.0 in caps.dp_128_132_bitrates:
+                link_info.dp_128_bitrates.append(video_pb2.DP_128_BITRATE_20_0)
+        else:
+            link_info.video_spec = video_pb2.VIDEO_SPECIFICATION_DP_1_4
+
         link_info.dsc = caps.dsc
 
         return link_info
