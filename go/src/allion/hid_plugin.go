@@ -12,6 +12,7 @@ import (
 	"io"
 	"log/slog"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/pkg/errors"
@@ -20,12 +21,14 @@ import (
 	"go.chromium.org/chromiumos/config/go/test/lab/api/passport"
 	"go.chromium.org/infra/cros/servo/testing"
 	"go.chromiumos.org/chromiumos/platform/passport/server"
+	"go.chromiumos.org/chromiumos/platform/passport/utils"
 )
 
 var (
 	mode = &serial.Mode{
 		BaudRate: 9600,
 	}
+	checkData = []byte{0x57, 0xAB}
 )
 
 func init() {
@@ -144,7 +147,7 @@ func (h *hidPlugin) MouseAction(ctx context.Context, req *passport.MouseActionRe
 
 func keyPressAndRelease(ctx context.Context, hid io.ReadWriter, keys []string, duration time.Duration) (*passport.KeyboardActionResponse, error) {
 	if len(keys) == 0 {
-		return nil, fmt.Errorf("Keys to press empty")
+		return nil, fmt.Errorf("keys to press empty")
 	}
 	if len(keys) > 6 {
 		return nil, fmt.Errorf("HID device only supports a maximum of 6 keys at once, requested: %d", len(keys))
@@ -152,7 +155,7 @@ func keyPressAndRelease(ctx context.Context, hid io.ReadWriter, keys []string, d
 
 	for _, key := range keys {
 		if _, ok := KeyCodes[key]; !ok {
-			return nil, fmt.Errorf("Unknown key: %q", key)
+			return nil, fmt.Errorf("unknown key: %q", key)
 		}
 	}
 
@@ -275,6 +278,12 @@ func (h *hidPlugin) refreshSimulators(ctx context.Context) error {
 	// Print the list of detected ports.
 	simulators := make(map[string]*hidSimulatorInfo)
 	for _, port := range ports {
+		// Skip non USB prefixed tty ports to avoid wasting time detecting.
+		if !strings.Contains(port, "USB") {
+			slog.Debug("Skipping port", "port", port)
+			continue
+		}
+
 		usbPort, err := serial.Open(port, mode)
 		if err != nil {
 			slog.Error("Failed to open serial port", "port", port, "error", err)
@@ -282,39 +291,20 @@ func (h *hidPlugin) refreshSimulators(ctx context.Context) error {
 		}
 		defer usbPort.Close()
 
-		var t = 3 * time.Second
-		usbPort.SetReadTimeout(t)
-		checkData := []byte{0x57, 0xAB}
-		_, err = usbPort.Write([]byte(MediaRelease))
+		slog.Debug("Checking port", "port", port)
+		data, err := utils.ReadWriteSerialPort(ctx, usbPort, 3*time.Second /* timeout */, []byte(MediaRelease), []byte("\n"))
 		if err != nil {
-			return errors.Wrap(err, "serial write error")
+			slog.Error("Failed to read from serial port", "port", port, "error", err)
+			continue
 		}
-		_, err = usbPort.Write([]byte("\n"))
-		if err != nil {
-			return errors.Wrap(err, "serial write newline error")
-		}
-
-		buff := make([]byte, 1000)
-		for {
-			// Reads up to 1000 bytes.
-			n, err := usbPort.Read(buff)
-			if err != nil {
-				return errors.Wrap(err, "serial read error")
-			}
-			if n == 0 {
-				break
-			}
-
-			if bytes.Contains(buff, checkData) {
-				simulators[port] = &hidSimulatorInfo{}
-				testing.ContextLogf(ctx, "Simulator: %s", port)
-				break
-			}
+		if bytes.Contains(data, checkData) {
+			simulators[port] = &hidSimulatorInfo{}
+			testing.ContextLogf(ctx, "Simulator: %s", port)
 		}
 	}
 
 	// Log HID devices that we were not able to detect this time.
-	for k, _ := range h.simulators {
+	for k := range h.simulators {
 		if _, ok := simulators[k]; !ok {
 			slog.Warn("unable to find previously detected HID", "HID id", k)
 		}

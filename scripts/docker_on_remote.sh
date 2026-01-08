@@ -80,7 +80,7 @@ function start_passport_service() {
       --rm \
       -p 8300:8300 --privileged \
       --name "passport-dev" \
-      "${PASSSPORT_DOCKER_IMAGE}${ARCH}"
+      "${PASSSPORT_DOCKER_IMAGE}${ARCH}" cros-passport --log-level DEBUG
 
   # Get the IP address of the container and echo forwarding command for testing.
   IP=$(${SSH_CMD} "${HOST}" \

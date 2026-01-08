@@ -18,6 +18,7 @@ import (
 	"go.chromium.org/chromiumos/config/go/test/lab/api/passport"
 	"go.chromiumos.org/chromiumos/platform/passport/port"
 	"go.chromiumos.org/chromiumos/platform/passport/server"
+	"go.chromiumos.org/chromiumos/platform/passport/utils"
 )
 
 // Aliases for switch port states.
@@ -271,31 +272,11 @@ func sendDataToSerialPort(ctx context.Context, port, req string, timeout time.Du
 	}
 	defer usbPort.Close()
 
-	if err := usbPort.SetReadTimeout(timeout); err != nil {
-		return "", fmt.Errorf("failed to set read timeout: %w", err)
+	data, err := utils.ReadWriteSerialPort(ctx, usbPort, timeout, []byte(req))
+	if err != nil {
+		return "", fmt.Errorf("failed to read from serial port: %q: %w", port, err)
 	}
-
-	if _, err := usbPort.Write([]byte(req)); err != nil {
-		return "", fmt.Errorf("failed to write serial port: %w", err)
-	}
-
-	// Read the response.
-	var resp string
-	buff := make([]byte, 1000)
-	for ctx.Err() == nil {
-		n, err := usbPort.Read(buff)
-		if err != nil {
-			return "", fmt.Errorf("failed to read serial port: %w", err)
-		}
-		if n == 0 {
-			fmt.Println("\nEOF")
-			break
-		}
-
-		resp = strings.TrimSpace(string(buff[:n]))
-	}
-
-	return resp, nil
+	return strings.TrimSpace(string(data)), nil
 }
 
 // isAllionDevice checks the usb device's info line to see if it corresponds to
