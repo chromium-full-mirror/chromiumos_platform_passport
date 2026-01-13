@@ -272,10 +272,12 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
                 logging.warning("Forced stop failed: %s, proceeding anyway", e)
                 raise RuntimeError(f"Forced stop failed: {e}")
 
+        logging.info("Start video capture")
         self._port_rx.video_capturer.start(
             frames_count=1,
             stream_number=request.id_stream,
         )
+        logging.info("Stop video capture")
         self._port_rx.video_capturer.stop()
         result = self._port_rx.video_capturer.capture_result
 
@@ -283,6 +285,7 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
         tmp = tempfile.NamedTemporaryFile(suffix=".bmp")
         # pylint: enable=R1732
 
+        logging.info("Saving image to disk")
         result.save_image_to_file(
             file_format=UniTAP.PictureFileFormat.BMP,
             path=tmp.name,
@@ -290,6 +293,7 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
         )
 
         with open(tmp.name, "rb") as f:
+            logging.info("Sending screenshot")
             return video_pb2.ScreenshotVideoTesterResponse(screenshot=f.read())
 
     @log_functionality.logger
