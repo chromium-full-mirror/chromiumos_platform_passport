@@ -9,6 +9,7 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -56,34 +57,55 @@ func LaunchPythonBridgefAndGetPort(binPath string, portArg int64, deviceType str
 	}
 	pipeWriter.Close()
 
-	portChan := make(chan int64)
-	errChan := make(chan error)
+	// Buffered channels to prevent goroutine leaks on timeout
+	portChan := make(chan int64, 1)
+	errChan := make(chan error, 1)
 
 	go func() {
-		// Scan from the reader end of the pipe
-		scanner := bufio.NewScanner(pipeReader)
+		// Use bufio.Reader to read line by line without line length limits.
+		reader := bufio.NewReader(pipeReader)
 		found := false
 		re := regexp.MustCompile(fmt.Sprintf("%s:(\\d+)", PORT_SCAN_PATTERN))
 
-		for scanner.Scan() {
-			line := scanner.Text()
+		for {
+			line, err := reader.ReadString('\n')
 
-			fmt.Fprintln(os.Stdout, line)
+			// ReadString can return both data AND an error simultaneously
+			// if the stream ends without a newline.
+			if len(line) > 0 {
+				fmt.Fprint(os.Stdout, line)
 
-			if !found {
-				matches := re.FindStringSubmatch(line)
-				if len(matches) >= 2 {
-					if p, err := strconv.Atoi(matches[1]); err == nil {
-						found = true
-						portChan <- int64(p)
-						// Keep running to print the logs.
+				if !found {
+					matches := re.FindStringSubmatch(line)
+					if len(matches) >= 2 {
+						if p, err := strconv.Atoi(matches[1]); err == nil {
+							found = true
+							// Use non-blocking send in case receiver is gone
+							select {
+							case portChan <- int64(p):
+							default:
+							}
+						}
 					}
 				}
+			}
+
+			if err != nil {
+				if err != io.EOF && !found {
+					select {
+					case errChan <- fmt.Errorf("error reading python output: %w", err):
+					default:
+					}
+				}
+				break // Exit the loop
 			}
 		}
 
 		if !found {
-			errChan <- fmt.Errorf("process stream ended without printing PORT_BOUND")
+			select {
+			case errChan <- fmt.Errorf("process stream ended without printing PORT_BOUND"):
+			default:
+			}
 		}
 	}()
 
