@@ -50,7 +50,6 @@ class Utc274FwUpdater:
         self._download_component_fw("ms")
 
         self._fw_updater = UTCLibrary.FWUpdate()
-        self._fw_updater.set_fw_folder_path(self._fw_blob_path)
         logging.info(
             "Utc274FwUpdater params fwpath:%s force: %s",
             self._fw_blob_path,
@@ -119,6 +118,8 @@ class Utc274FwUpdater:
 
     @log_functionality.logger
     def _update_with_serial(self, serial):
+        self._fw_updater.set_fw_folder_path(self._fw_blob_path)
+
         logging.info("Selecting device, serial %s", serial)
         self._fw_updater.select_device_to_update(serial_number=serial)
 
