@@ -49,7 +49,8 @@ class Utc274FwUpdater:
         self._download_component_fw("pd")
         self._download_component_fw("ms")
 
-        self._fw_updater = UTCLibrary.FWUpdate()
+        self._utc_lib = UTCLibrary.UTCLib()
+        self._fw_updater = UTCLibrary.FWUpdate(self._utc_lib)
         logging.info(
             "Utc274FwUpdater params fwpath:%s force: %s",
             self._fw_blob_path,
@@ -102,7 +103,9 @@ class Utc274FwUpdater:
 
         devices = self._fw_updater.device_list()
         for _, device in enumerate(devices):
-            self._update_with_serial(device[2])
+            self._update_with_serial(
+                device[constants.UTC_274_SERIAL_STRUCT_IDX]
+            )
 
         logging.info("Finished attempting to update all connected devices")
 
@@ -111,7 +114,9 @@ class Utc274FwUpdater:
         for device in self._fw_updater.device_list():
             # Check if device is open. Update FW only if the device is
             # not in use and the serials match.
-            if device[2] == serial and (not device[1]):
+            if device[constants.UTC_274_SERIAL_STRUCT_IDX] == serial and (
+                not device[constants.UTC_274_LOCKED_NAME_STRUCT_IDX]
+            ):
                 return self._update_with_serial(serial)
 
         raise Exception(f"Device with serial {serial} was not performed")

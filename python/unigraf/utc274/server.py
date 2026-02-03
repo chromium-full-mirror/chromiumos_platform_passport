@@ -57,12 +57,12 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
 
         testers = []
         for device in self._raw_device:
-            # Raw device list has the type: (printable_name, locked, serial)
-            if "UTC-274" not in device[0]:
-                continue
-
+            # Raw device list has the type: (locked(bool), serial, cmd_role)
             testers.append(
-                usb_tester_service_pb2.UsbTester(id=device[2], name="UTC-274")
+                usb_tester_service_pb2.UsbTester(
+                    id=device[constants.UTC_274_SERIAL_STRUCT_IDX],
+                    name="UTC-274",
+                )
             )
 
         return usb_tester_service_pb2.GetTestersReply(testers=testers)
@@ -432,7 +432,7 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
         with self._serial_locks[serial]:
             dev = self._open_devices[serial]
             ret = dev.hw.hid_keyboard(
-                UTCLibrary.DeviceAPI.Common.HIDKeyboardKeys.KEY_G,
+                UTCLibrary.HIDKeyboardKeys.KEY_G,
             )
 
             return usb_tester_service_pb2.SimulateKeyPressReply(
