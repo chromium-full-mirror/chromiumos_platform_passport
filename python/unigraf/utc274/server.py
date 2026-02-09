@@ -107,17 +107,28 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
 
         Used to close the serial of the USB tester being used.
         """
+        cleanup_performed = False
         serial = request.id
 
-        if serial not in self._serial_locks or serial not in self._open_devices:
-            raise ProcessLookupError(f"Serial {serial} is malformed.")
+        if serial in self._serial_locks:
+            logging.info(f"Removing serial lock for  {serial}")
+            del self._serial_locks[serial]
+            cleanup_performed = True
 
-        del self._serial_locks[serial]
-        del self._open_devices[serial]
+        if serial in self._open_devices:
+            logging.info(f"Removing device controller for{serial}")
+            cleanup_performed = True
+            try:
+                self._lib.close_device(serial_num=serial)
+                del self._open_devices[serial]
+            except:
+                # We still got things to clean up, put the flag to false in case anything fails.
+                cleanup_performed = False
 
-        self._lib.close_device(serial_num=serial)
-
-        return usb_tester_service_pb2.CloseTesterReply(err_code=0, error_msg="")
+        return usb_tester_service_pb2.CloseTesterReply(
+            err_code=(not cleanup_performed),
+            error_msg="",
+        )
 
     # TODO: add timeout and delay params
     def _capability_get(self, serial, attr):
