@@ -9,6 +9,8 @@ tester connections, retrieve and set tester capabilities, and perform various
 hardware operations such as cable replugging, hard resets, and EDID loading.
 """
 
+import contextlib
+import datetime
 import logging
 import operator
 import tempfile
@@ -35,6 +37,9 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
     managing device connections, capabilities, and operations.
     """
 
+    DEVICE_TIMEOUT = datetime.timedelta(hours=1)
+    _INACTIVE_DEVICE_CLEANUP_INTERVAL = datetime.timedelta(minutes=5)
+
     # @log_functionality.logger
     def __init__(self):
         self._lib = UTCLibrary.UTCLib()
@@ -43,7 +48,14 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
         self._raw_device = self._lib.devices_name_list()
         self._serial_locks = {}
         self._open_devices = {}
+        self._last_access_time = {}
+        self._devices_dict_lock = threading.Lock()
         self.SDK_F_MAP = translate.SDK_F_MAP
+
+        self._cleanup_thread = threading.Thread(
+            target=self._cleanup_inactive_devices, daemon=True
+        )
+        self._cleanup_thread.start()
 
         logging.info("UsbTesterServiceServicer init done")
 
@@ -75,17 +87,19 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
         """
         serial = request.id
 
-        if serial in self._serial_locks or serial in self._open_devices:
-            logging.info("Device serials locks are: %s", self._serial_locks)
-            logging.info("Open devices are: %s", self._open_devices)
-            raise ProcessLookupError(f"Serial {serial} is already open.")
+        with self._devices_dict_lock:
+            if serial in self._serial_locks or serial in self._open_devices:
+                logging.info("Device serials locks are: %s", self._serial_locks)
+                logging.info("Open devices are: %s", self._open_devices)
+                raise ProcessLookupError(f"Serial {serial} is already open.")
 
-        # Try to open the device first so in case this fails we dont populate
-        # the locks
-        dev = self._lib.open_device(serial_number=serial)
+            # Try to open the device first so in case this fails we dont populate
+            # the locks
+            dev = self._lib.open_device(serial_number=serial)
 
-        self._serial_locks[serial] = threading.Lock()
-        self._open_devices[serial] = dev
+            self._serial_locks[serial] = threading.Lock()
+            self._open_devices[serial] = dev
+            self._last_access_time[serial] = datetime.datetime.now()
 
         # Set the active CC when in ET cable mode to CC1
         dev.pd.select_active_cc(
@@ -107,23 +121,9 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
 
         Used to close the serial of the USB tester being used.
         """
-        cleanup_performed = False
         serial = request.id
-
-        if serial in self._serial_locks:
-            logging.info(f"Removing serial lock for  {serial}")
-            del self._serial_locks[serial]
-            cleanup_performed = True
-
-        if serial in self._open_devices:
-            logging.info(f"Removing device controller for{serial}")
-            cleanup_performed = True
-            try:
-                self._lib.close_device(serial_num=serial)
-                del self._open_devices[serial]
-            except:
-                # We still got things to clean up, put the flag to false in case anything fails.
-                cleanup_performed = False
+        with self._devices_dict_lock:
+            cleanup_performed = self._close_device(serial)
 
         return usb_tester_service_pb2.CloseTesterReply(
             err_code=(not cleanup_performed),
@@ -132,11 +132,8 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
 
     # TODO: add timeout and delay params
     def _capability_get(self, serial, attr):
-        self._validate_serial_open(serial)
-
         val = None
-        with self._serial_locks[serial]:
-            dev = self._open_devices[serial]
+        with self._device_access(serial) as dev:
             try:
                 get_f = operator.attrgetter(self.SDK_F_MAP[attr][0])(dev)
             except Exception as e:
@@ -146,15 +143,12 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
                 raise e
 
             val = get_f()
-
         return val
 
     # TODO: add timeout and delay params
     def _capability_set(self, serial, attr, val):
-        self._validate_serial_open(serial)
-
-        with self._serial_locks[serial]:
-            dev = self._open_devices[serial]
+        ret = None
+        with self._device_access(serial) as dev:
             try:
                 set_f = operator.attrgetter(self.SDK_F_MAP[attr][1])(dev)
             except Exception as e:
@@ -164,8 +158,7 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
                 raise e
 
             ret = set_f(arg=val, delay_ms=constants.UTC_274_DELAY_MS)
-
-            return ret
+        return ret
 
     def GetTesterCapability(self, request, _context):
         """This method retrieves various USB-C connection details.
@@ -211,11 +204,8 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
 
     def GetDpInfo(self, request, _context):
         serial = request.id
-        self._validate_serial_open(serial)
-
         dp_val = {}
-        with self._serial_locks[serial]:
-            dev = self._open_devices[serial]
+        with self._device_access(serial) as dev:
             dp_val = dev.dp.update_dp_info()
 
         if dp_val < 0:
@@ -247,10 +237,9 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
         This method is used to get the active test port on the testing device.
         """
         serial = request.id
-        self._validate_serial_open(serial)
-
-        dev = self._open_devices[serial]
-        active_port = dev.hw.update_active_port()
+        active_port = -1
+        with self._device_access(serial) as dev:
+            active_port = dev.hw.update_active_port()
 
         if active_port < 0:
             return usb_tester_service_pb2.GetActivePortReply(
@@ -280,29 +269,27 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
         This method is used to set the active test port on the testing device.
         """
         serial = request.id
-        self._validate_serial_open(serial)
-
-        dev = self._open_devices[serial]
         set_status = 0
-        active_port = dev.hw.update_active_port()
+        with self._device_access(serial) as dev:
+            active_port = dev.hw.update_active_port()
 
-        # TODO(b/441683499): rework this API so we don't have to do hacky things
-        # like this.
-        to_set = request.port_id + 1
+            # TODO(b/441683499): rework this API so we don't have to do hacky
+            # things like this.
+            to_set = request.port_id + 1
 
-        if active_port != to_set:
-            # TODO (b/450467364): remove this workaround when the FW fixes it.
-            dev.dp.hpd_vdm_irq_control(delay_ms=constants.UTC_274_DELAY_MS)
-            set_status = dev.hw.select_active_port(
-                arg=to_set,
-                delay_ms=constants.UTC_274_DELAY_MS,
-            )
-            time.sleep(constants.UTC_274_STABILITY_S)
+            if active_port != to_set:
+                # TODO (b/450467364): remove this workaround when the FW fixes it.
+                dev.dp.hpd_vdm_irq_control(delay_ms=constants.UTC_274_DELAY_MS)
+                set_status = dev.hw.select_active_port(
+                    arg=to_set,
+                    delay_ms=constants.UTC_274_DELAY_MS,
+                )
+                time.sleep(constants.UTC_274_STABILITY_S)
 
-        time.sleep(1)
-        if request.state == usb_tester_service_pb2.PORT_STATE_OFF:
-            dev.hw.select_active_port(0)
-            time.sleep(constants.UTC_274_STABILITY_S)
+            time.sleep(1)
+            if request.state == usb_tester_service_pb2.PORT_STATE_OFF:
+                dev.hw.select_active_port(0)
+                time.sleep(constants.UTC_274_STABILITY_S)
 
         reply = usb_tester_service_pb2.SetActivePortReply(
             err_code=set_status,
@@ -318,11 +305,8 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
         thetester and the DUT.
         """
         serial = request.id
-        self._validate_serial_open(serial)
-
         ret = 0
-        with self._serial_locks[serial]:
-            dev = self._open_devices[serial]
+        with self._device_access(serial) as dev:
             # TODO (b/450467364): remove this workaround when the FW fixes it.
             dev.dp.hpd_vdm_irq_control(delay_ms=constants.UTC_274_DELAY_MS)
             ret = dev.pd.replug()
@@ -336,10 +320,8 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
     def HardResetTester(self, request, _context):
         """This method is used to do a hard reset."""
         serial = request.id
-        self._validate_serial_open(serial)
-
         ret = 0
-        with self._serial_locks[serial]:
+        with self._device_access(serial):
             # TODO (b/456712361): Temporarily disabled due to it breaking the PDC FW.
             # dev = self._open_devices[serial]
             # ret = dev.sys_reboot()
@@ -355,11 +337,8 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
     def ResetPd(self, request, context):
         """This method is used to issue power delivery resets."""
         serial = request.id
-        self._validate_serial_open(serial)
-
         ret = 0
-        with self._serial_locks[serial]:
-            dev = self._open_devices[serial]
+        with self._device_access(serial) as dev:
             if request.soft:
                 ret = dev.pd.soft_reset()
             else:
@@ -386,11 +365,8 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
         logging.info("Temp file name was %s", tmp.name)
 
         serial = request.id
-        self._validate_serial_open(serial)
-
         ret = 0
-        with self._serial_locks[serial]:
-            dev = self._open_devices[serial]
+        with self._device_access(serial) as dev:
             ret = dev.hw.load_edid(tmp.name)
 
         return usb_tester_service_pb2.LoadEdidReply(
@@ -400,64 +376,53 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
     def GetPdos(self, request, _context):
         """This method is used to do a hard reset."""
         serial = request.id
-        self._validate_serial_open(serial)
-
-        with self._serial_locks[serial]:
-            dev = self._open_devices[serial]
-
+        src_pdos = []
+        with self._device_access(serial) as dev:
             sdk_pdos = dev.pd.update_dut_pdo()
             src_pdos = [
                 int.from_bytes(bytearray(pdo), byteorder="little", signed=False)
                 for pdo in sdk_pdos
             ]
 
-            return usb_tester_service_pb2.GetPdosReply(
-                err_code=0,
-                error_msg="",
-                src_pdos=src_pdos,
-            )
+        return usb_tester_service_pb2.GetPdosReply(
+            err_code=0,
+            error_msg="",
+            src_pdos=src_pdos,
+        )
 
     def SendVdmHpd(self, request, context):
         """This method is used send a VDM HPDs."""
 
         serial = request.id
-        self._validate_serial_open(serial)
-
-        with self._serial_locks[serial]:
-            dev = self._open_devices[serial]
-
-            ret = 0
+        ret = 0
+        with self._device_access(serial) as dev:
             if request.vdm_hpd == usb_tester_service_pb2.VDM_HPD_IRQ:
                 ret = dev.dp.hpd_vdm_irq_control()
 
-            return usb_tester_service_pb2.SendVdmHpdReply(
-                err_code=ret,
-                error_msg="Failed to send vdm" if ret else "",
-            )
+        return usb_tester_service_pb2.SendVdmHpdReply(
+            err_code=ret,
+            error_msg="Failed to send vdm" if ret else "",
+        )
 
     def SimulateKeyPress(self, request, context):
         """Simulate a key press. ATM this will simulate the "G" key press."""
         serial = request.id
-        self._validate_serial_open(serial)
-
-        with self._serial_locks[serial]:
-            dev = self._open_devices[serial]
+        ret = 0
+        with self._device_access(serial) as dev:
             ret = dev.hw.hid_keyboard(
                 UTCLibrary.HIDKeyboardKeys.KEY_G,
             )
 
-            return usb_tester_service_pb2.SimulateKeyPressReply(
-                err_code=ret,
-                error_msg="Failed to simulate key G press" if ret else "",
-            )
+        return usb_tester_service_pb2.SimulateKeyPressReply(
+            err_code=ret,
+            error_msg="Failed to simulate key G press" if ret else "",
+        )
 
     def SendPdAlert(self, request, context):
         """Send a PD alert message to partner."""
         serial = request.id
-        self._validate_serial_open(serial)
-
-        with self._serial_locks[serial]:
-            dev = self._open_devices[serial]
+        ret = 0
+        with self._device_access(serial) as dev:
             ret = dev.pd.extended_alert_message_event(
                 translate.GRCP_ALERT_TO_SDK_ALERT[request.pd_alert]
             )
@@ -467,14 +432,11 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
     def GetPdStats(self, request, context):
         """Get statistics about the PD requests."""
         serial = request.id
-        self._validate_serial_open(serial)
-
         reply = usb_tester_service_pb2.GetPdStatsReply(err_code=0)
-        with self._serial_locks[serial]:
-            dev = self._open_devices[serial].pd
-
+        with self._device_access(serial) as dev:
+            pd_dev = dev.pd
             power_roles_spwas_stats = {
-                i: dev.update_power_role_swap_count(i.value)
+                i: pd_dev.update_power_role_swap_count(i.value)
                 for i in list(translate.PdSwapType)
             }
 
@@ -492,7 +454,7 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
             )
 
             data_roles_spwas_stats = {
-                i: dev.update_data_role_swap_count(i.value)
+                i: pd_dev.update_data_role_swap_count(i.value)
                 for i in list(translate.PdSwapType)
             }
             reply.data_role_swap_count_allow = data_roles_spwas_stats[
@@ -521,18 +483,16 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
     def ResetPdStats(self, request, context):
         """Reset the PD statistics."""
         serial = request.id
-        self._validate_serial_open(serial)
-
         sdk_err_code = 0
-        with self._serial_locks[serial]:
-            dev = self._open_devices[serial].pd
+        with self._device_access(serial) as dev:
+            pd_dev = dev.pd
             # In case the API call fails a negative error code will be returned.
             data_role_resets = [
-                dev.reset_data_role_swap_count(i.value)
+                pd_dev.reset_data_role_swap_count(i.value)
                 for i in list(translate.PdSwapType)
             ]
             power_role_resets = [
-                dev.reset_power_role_swap_count(i.value)
+                pd_dev.reset_power_role_swap_count(i.value)
                 for i in list(translate.PdSwapType)
             ]
             sdk_err_code = min(min(data_role_resets), min(power_role_resets))
@@ -541,13 +501,72 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
             err_code=sdk_err_code,
         )
 
-    def _validate_serial_open(self, serial):
-        if serial not in self._open_devices:
-            logging.info("Open devices are: %s", self._open_devices)
-            logging.error("Invalid serial %s when taking device", serial)
-            raise ValueError(f"No device with serial {serial}")
+    def _close_device(self, serial):
+        """Closes a device and cleans up its resources.
 
-        if serial not in self._serial_locks:
-            logging.info("Open devices lock are: %s", self._serial_locks)
-            logging.error("Invalid serial %s when taking lock", serial)
-            raise ValueError(f"No device lock with serial {serial}")
+        This method should be called with self._devices_dict_lock held.
+        """
+        cleanup_performed = False
+        if serial in self._serial_locks:
+            logging.info("Removing serial lock for  %s", serial)
+            del self._serial_locks[serial]
+            cleanup_performed = True
+
+        if serial in self._open_devices:
+            logging.info("Removing device controller for %s", serial)
+            try:
+                self._lib.close_device(serial_num=serial)
+                del self._open_devices[serial]
+                if serial in self._last_access_time:
+                    del self._last_access_time[serial]
+                cleanup_performed = True
+            except Exception as e:
+                # We still got things to clean up, put the flag to false in case anything fails.
+                logging.error("Failed to close device %s: %s", serial, e)
+                cleanup_performed = False
+
+        return cleanup_performed
+
+    def _cleanup_inactive_devices(self):
+        """Periodically checks for and closes inactive devices."""
+        while True:
+            time.sleep(self._INACTIVE_DEVICE_CLEANUP_INTERVAL.total_seconds())
+            now = datetime.datetime.now()
+
+            inactive_serials = []
+            with self._devices_dict_lock:
+                for serial, last_access in list(self._last_access_time.items()):
+                    if now - last_access > self.DEVICE_TIMEOUT:
+                        inactive_serials.append(serial)
+
+            for serial in inactive_serials:
+                logging.info(
+                    "Device %s has been inactive for over %s. Closing.",
+                    serial,
+                    self.DEVICE_TIMEOUT,
+                )
+                with self._devices_dict_lock:
+                    self._close_device(serial)
+
+    @contextlib.contextmanager
+    def _device_access(self, serial):
+        """A context manager for thread-safe device access."""
+        with self._devices_dict_lock:
+            if serial not in self._open_devices:
+                logging.info("Open devices are: %s", self._open_devices)
+                raise ValueError(f"No device with serial {serial}")
+            if serial not in self._serial_locks:
+                logging.info("Open device locks are: %s", self._serial_locks)
+                raise ValueError(f"No device lock with serial {serial}")
+
+        with self._serial_locks[serial]:
+            # The device could have been closed by another thread after the check
+            # and before we acquired the serial lock.
+            dev = self._open_devices.get(serial)
+            if not dev:
+                raise ValueError(f"Device {serial} was closed unexpectedly.")
+            yield dev
+
+        with self._devices_dict_lock:
+            if serial in self._last_access_time:
+                self._last_access_time[serial] = datetime.datetime.now()
