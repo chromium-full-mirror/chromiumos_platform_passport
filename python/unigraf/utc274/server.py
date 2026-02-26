@@ -321,11 +321,8 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
         """This method is used to do a hard reset."""
         serial = request.id
         ret = 0
-        with self._device_access(serial):
-            # TODO (b/456712361): Temporarily disabled due to it breaking the PDC FW.
-            # dev = self._open_devices[serial]
-            # ret = dev.sys_reboot()
-            ret = 0
+        with self._device_access(serial) as dev:
+            ret = dev.hw.pdc_reset()
 
         return usb_tester_service_pb2.HardResetTesterReply(
             err_code=ret,
