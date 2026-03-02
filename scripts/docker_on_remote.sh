@@ -26,6 +26,7 @@
 #
 set -e
 
+TEMP_DIR="/tmp/passport_docker"
 SCRIPT_DIR="$(dirname "$(realpath -e "${BASH_SOURCE[0]}")")"
 PROJECT_DIR="$(realpath -e "${SCRIPT_DIR}/..")"
 SSH_CMD="ssh -q -o StrictHostKeyChecking=no"
@@ -39,6 +40,10 @@ while [[ $# -gt 0 ]]; do
   case $1 in
     --build_from_local)
       BUILD_FROM_LOCAL=true
+      shift
+      ;;
+    --include-arm)
+      INCLUDE_ARM=true
       shift
       ;;
     *)
@@ -128,7 +133,11 @@ fi
 
 # else build from local source then push to remote host(s)
 echo "Building docker image"
-"${SCRIPT_DIR}/build_docker.sh"
+BUILD_FLAGS=""
+if [[ "${INCLUDE_ARM}" == true ]]; then
+  BUILD_FLAGS="--include-arm"
+fi
+"${SCRIPT_DIR}/build_docker.sh" ${BUILD_FLAGS}
 
 for HOST in "${HOSTS[@]}"; do
   echo -e "\n${LOG_DIVIDER}"
@@ -152,7 +161,7 @@ for HOST in "${HOSTS[@]}"; do
 
   echo "Copying image to host"
   scp -o StrictHostKeyChecking=no \
-      "${PROJECT_DIR}/passport${ARCH}.tar" \
+      "${TEMP_DIR}/passport${ARCH}.tar" \
       "${HOST}:/tmp/passport.tar"
 
   echo "Starting container"

@@ -72,6 +72,31 @@ func (s *cameraServiceServer) AnalyzeImageHSV(ctx context.Context, req *passport
 	return resp, nil
 }
 
+func (s *cameraServiceServer) CaptureVideo(req *passport.CaptureVideoRequest, stream passport.CameraService_CaptureVideoServer) error {
+	slog.Info("Received passport.CaptureVideoRequest", "req", req)
+	if len(req.GetDeviceIds()) == 0 {
+		return fmt.Errorf("no device_ids provided")
+	}
+	if len(req.GetDeviceIds()) > 4 {
+		return fmt.Errorf("tiling is supported for a maximum of 4 cameras, %d requested", len(req.GetDeviceIds()))
+	}
+
+	var p CameraPlugin
+	for _, id := range req.GetDeviceIds() {
+		c, err := s.pluginForCamera(stream.Context(), id)
+		if err != nil {
+			return fmt.Errorf("failed to fetch plugin for camera %q: %w", id, err)
+		}
+		if p == nil {
+			p = c
+		} else if p != c {
+			return fmt.Errorf("cameras %v belong to different plugins, tiling is not supported across plugins", req.GetDeviceIds())
+		}
+	}
+
+	return p.CaptureVideo(req, stream)
+}
+
 // pluginForCamera gets the plugin that controls a specific camera.
 func (s *cameraServiceServer) pluginForCamera(ctx context.Context, id string) (CameraPlugin, error) {
 	if c, ok := s.cameraMap[id]; ok {

@@ -130,7 +130,7 @@ RUN venv/bin/pip install -U pip-licenses \
 FROM --platform=$BUILDPLATFORM debian:bookworm-slim
 
 RUN apt-get update \
-  && apt-get install -y usbutils libpcap-dev ca-certificates \
+  && apt-get install -y usbutils libpcap-dev ca-certificates ffmpeg \
   && update-ca-certificates \
   && mkdir -p /opt/unigraf/
 

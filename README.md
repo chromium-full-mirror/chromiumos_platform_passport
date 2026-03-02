@@ -17,12 +17,13 @@ The service can be started in `server` mode by running:
 
 ### With Docker
 #### Local Machine
-The service can be built on your local machine by running `./scripts/build_docker.sh`
+The service can be built on your local machine by running `./scripts/build_docker.sh`.
+By default this only builds for `amd64`. To include `arm64` use the `--include-arm` flag.
 
 If you want to use TOT rather than your local checkout you should add
 the `REMOTE_SOURCE` variable to your build command e.g.
 ```
-REMOTE_SOURCE=1 ./scripts/build_docker.sh
+REMOTE_SOURCE=1 ./scripts/build_docker.sh --include-arm
 ```
 
 The container can be started on your local machine by running
@@ -32,10 +33,11 @@ docker run -p 8200:8300 passport:amd64
 
 #### Remote Machine
 The service can be started on a remote machine by running `./scripts/docker_on_remote.sh <HOSTNAME>`
+If the remote machine is ARM based you should include the `--include-arm` flag.
 
 For a remote satlab device this would look like
 ```
-./scripts/docker_on_remote.sh moblab@XXX.XXX.XXX.XXX
+./scripts/docker_on_remote.sh --include-arm moblab@XXX.XXX.XXX.XXX
 ```
 
 The script will automatically start the service at port `8300` on the remote machine.

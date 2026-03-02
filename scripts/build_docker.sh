@@ -6,6 +6,7 @@
 # Exit immediately if a command exits with a non-zero status.
 set -euo pipefail
 
+TEMP_DIR="/tmp/passport_docker"
 PROJECT=us-docker.pkg.dev/cros-passport/passport
 DIR="$(dirname "$(realpath -e "${BASH_SOURCE[0]}")")"
 DOCKERFILE="${DIR}/../dockerfiles/Dockerfile"
@@ -17,6 +18,21 @@ REMOTE_DEV_URL="https://chromium.googlesource.com/chromiumos/platform/dev-util.g
 
 # Consolidate all common build flags into a single variable.
 FLAGS="-f ${DOCKERFILE}"
+INCLUDE_ARM=false
+
+# parse the cli arguments
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --include-arm)
+      INCLUDE_ARM=true
+      shift
+      ;;
+    *)
+      # Ignore other flags
+      shift
+      ;;
+  esac
+done
 
 # Variables to hold the commit SHAs.
 APICONFIG_COMMIT=""
@@ -64,8 +80,13 @@ if [[ -n "${PUSH-}" ]]; then
     echo "Starting multi-platform build and push..."
     docker buildx create --use --name passport-builder
 
+    PLATFORMS="linux/amd64"
+    if [[ "${INCLUDE_ARM}" == true ]]; then
+        PLATFORMS+=",linux/arm64"
+    fi
+
     docker buildx build \
-        --platform=linux/arm64,linux/amd64 \
+        --platform="${PLATFORMS}" \
         -t "${PROJECT}/passport:latest" \
         ${FLAGS} \
         --push \
@@ -83,18 +104,21 @@ else
         ${FLAGS} \
         "${DIR}/."
 
-    docker save -o "${DIR}/../passport-amd64.tar" \
+    mkdir -p "${TEMP_DIR}"
+    docker save -o "${TEMP_DIR}/passport-amd64.tar" \
         "${PROJECT}/passport:latest-amd64"
 
-    # Build and save arm64 for Raspberry Pi or other ARM devices.
-    echo "Building for linux/arm64..."
-    docker buildx build \
-        --platform=linux/arm64 \
-        -t "${PROJECT}/passport:latest-arm64" \
-        --output type=docker \
-        ${FLAGS} \
-        "${DIR}/."
+    if [[ "${INCLUDE_ARM}" == true ]]; then
+        # Build and save arm64 for Raspberry Pi or other ARM devices.
+        echo "Building for linux/arm64..."
+        docker buildx build \
+            --platform=linux/arm64 \
+            -t "${PROJECT}/passport:latest-arm64" \
+            --output type=docker \
+            ${FLAGS} \
+            "${DIR}/."
 
-    docker save -o "${DIR}/../passport-arm64.tar" \
-        "${PROJECT}/passport:latest-arm64"
+        docker save -o "${TEMP_DIR}/passport-arm64.tar" \
+            "${PROJECT}/passport:latest-arm64"
+    fi
 fi

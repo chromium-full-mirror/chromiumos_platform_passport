@@ -12,7 +12,9 @@ import (
 	"image"
 	"image/color"
 	"image/jpeg"
+	"io"
 	"log/slog"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -175,6 +177,105 @@ func (s *cameraPlugin) AnalyzeImageHSV(ctx context.Context, req *passport.Analyz
 	}, nil
 }
 
+// CaptureVideo captures a tiled video from multiple cameras using ffmpeg directly.
+func (s *cameraPlugin) CaptureVideo(req *passport.CaptureVideoRequest, stream passport.CameraService_CaptureVideoServer) error {
+	slog.Info("Capturing tiled video using ffmpeg v4l2", "ports", req.GetDeviceIds(), "duration", req.GetDurationSeconds())
+
+	// Set auto-exposure for all cameras before starting ffmpeg
+	for _, id := range req.GetDeviceIds() {
+		cam, err := webcam.Open(id)
+		if err != nil {
+			slog.Warn("Failed to open camera to set auto-exposure", "port", id, "error", err)
+			continue
+		}
+		if err := setManualExposure(cam, 0); err != nil {
+			slog.Warn("Failed to set auto-exposure", "port", id, "error", err)
+		}
+		cam.Close()
+	}
+
+	// ffmpeg -f v4l2 -input_format mjpeg -video_size 640x480 -i /dev/video0 ...
+	args := []string{}
+	filter := ""
+	for i, id := range req.GetDeviceIds() {
+		args = append(args, "-f", "v4l2", "-input_format", "mjpeg", "-video_size", "640x480", "-i", id)
+		// Label each stream: [v0], [v1], etc.
+		filter += fmt.Sprintf("[%d:v]drawtext=text='%s':fontcolor=white:fontsize=24:box=1:boxcolor=black@0.5:boxborderw=5:x=10:y=10[v%d];", i, id, i)
+	}
+
+	num := len(req.GetDeviceIds())
+	if num > 1 {
+		var layout string
+		switch num {
+		case 2:
+			layout = "0_0|w0_0"
+		case 3:
+			layout = "0_0|w0_0|0_h0"
+		default: // 4
+			layout = "0_0|w0_0|0_h0|w0_h0"
+		}
+		// Combine labeled streams into xstack
+		for i := 0; i < num; i++ {
+			filter += fmt.Sprintf("[v%d]", i)
+		}
+		filter += fmt.Sprintf("xstack=inputs=%d:layout=%s", num, layout)
+		args = append(args, "-filter_complex", filter)
+	} else {
+		// Single camera, still add overlay
+		args = append(args, "-vf", fmt.Sprintf("drawtext=text='%s':fontcolor=white:fontsize=24:box=1:boxcolor=black@0.5:boxborderw=5:x=10:y=10", req.GetDeviceIds()[0]))
+	}
+
+	args = append(args,
+		"-t", fmt.Sprintf("%d", req.GetDurationSeconds()),
+		"-c:v", "libx264",
+		"-pix_fmt", "yuv420p",
+		"-preset", "ultrafast",
+		"-f", "mp4",
+		"-movflags", "frag_keyframe+empty_moov",
+		"pipe:1",
+	)
+
+	cmd := exec.CommandContext(stream.Context(), "ffmpeg", args...)
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return fmt.Errorf("failed to get ffmpeg stdout pipe: %w", err)
+	}
+
+	stderr := &bytes.Buffer{}
+	cmd.Stderr = stderr
+
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("failed to start ffmpeg: %w, stderr: %s", err, stderr.String())
+	}
+
+	// Read from ffmpeg stdout and stream to gRPC client
+	chunk := make([]byte, 1024*1024)
+	for {
+		n, err := stdout.Read(chunk)
+		if n > 0 {
+			if sendErr := stream.Send(&passport.CaptureVideoResponse{
+				Video:         chunk[:n],
+				FileExtension: "mp4",
+			}); sendErr != nil {
+				return fmt.Errorf("failed to send video chunk: %w", sendErr)
+			}
+		}
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("failed to read from ffmpeg stdout: %w", err)
+		}
+	}
+
+	if err := cmd.Wait(); err != nil {
+		return fmt.Errorf("ffmpeg exited with error: %w, stderr: %s", err, stderr.String())
+	}
+
+	slog.Info("Tiled video capture complete", "duration", req.GetDurationSeconds(), "cameras", len(req.GetDeviceIds()))
+	return nil
+}
+
 func captureFrame(ctx context.Context, devPort string, exposureMicroseconds int32) ([]byte, error) {
 	const settlingTime = 10
 
@@ -324,8 +425,24 @@ func configureImageSize(ctx context.Context, cam *webcam.Webcam) error {
 
 // addMotionDht adds header to JPEG file.
 func addMotionDht(frame []byte) ([]byte, error) {
+	// Find SOI marker (FF D8)
+	soi := []byte{0xff, 0xd8}
+	soiIdx := bytes.Index(frame, soi)
+	if soiIdx == -1 {
+		return nil, fmt.Errorf("SOI marker not found in frame")
+	}
+	frame = frame[soiIdx:]
+
+	// If the frame already contains a DHT marker, don't add another one.
+	if bytes.Contains(frame, dhtMarker) {
+		return frame, nil
+	}
+
 	// Append each segment to the image after splitting.
-	start, end, _ := bytes.Cut(frame, sosMarker)
+	start, end, found := bytes.Cut(frame, sosMarker)
+	if !found {
+		return nil, fmt.Errorf("SOS marker not found in frame")
+	}
 	var buf bytes.Buffer
 	for _, segment := range [][]byte{start, dhtMarker, dht, sosMarker, end} {
 		if _, err := buf.Write(segment); err != nil {

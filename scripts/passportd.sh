@@ -48,6 +48,7 @@ trap cleanup_on_exit EXIT
 # --- End Trap Handler ---
 
 readonly DOCKER_IMAGE_REPO="us-docker.pkg.dev/cros-passport/passport/passport"
+readonly TEMP_DIR="/tmp/passport_docker"
 
 #######################################
 # Determines the correct passport image and tag based on host architecture.
@@ -164,18 +165,24 @@ install() {
   echo "Running build script to create docker image tarballs..."
   (
     cd "${scripts_dir}"
-    if ! REMOTE_SOURCE=1  /bin/bash "${build_script_path}"; then
+    local build_flags=""
+    local arch
+    arch=$(uname -m)
+    if [[ "${arch}" == "aarch64" || "${arch}" == "arm64" ]]; then
+      build_flags="--include-arm"
+    fi
+    if ! REMOTE_SOURCE=1  /bin/bash "${build_script_path}" ${build_flags}; then
       echo "Error: Failed to build docker images." >&2
       exit 1
     fi
   )
 
   echo "Loading docker images..."
-  if [ -f "${scripts_dir}/passport-amd64.tar" ]; then
-    docker load -i "${scripts_dir}/passport-amd64.tar"
+  if [ -f "${TEMP_DIR}/passport-amd64.tar" ]; then
+    docker load -i "${TEMP_DIR}/passport-amd64.tar"
   fi
-  if [ -f "${scripts_dir}/passport-arm64.tar" ]; then
-    docker load -i "${scripts_dir}/passport-arm64.tar"
+  if [ -f "${TEMP_DIR}/passport-arm64.tar" ]; then
+    docker load -i "${TEMP_DIR}/passport-arm64.tar"
   fi
 
   echo "Installation complete. Verifying..."
