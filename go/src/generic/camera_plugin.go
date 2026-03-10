@@ -425,30 +425,23 @@ func configureImageSize(ctx context.Context, cam *webcam.Webcam) error {
 
 // addMotionDht adds header to JPEG file.
 func addMotionDht(frame []byte) ([]byte, error) {
-	// Find SOI marker (FF D8)
-	soi := []byte{0xff, 0xd8}
-	soiIdx := bytes.Index(frame, soi)
-	if soiIdx == -1 {
-		return nil, fmt.Errorf("SOI marker not found in frame")
-	}
-	frame = frame[soiIdx:]
-
-	// If the frame already contains a DHT marker, don't add another one.
-	if bytes.Contains(frame, dhtMarker) {
-		return frame, nil
-	}
-
-	// Append each segment to the image after splitting.
+	// Always inject the DHT before the first SOS (Start of Scan) marker.
+	// We avoid brittle checks for existing markers or SOI markers as they
+	// can have false positives in encoded data.
 	start, end, found := bytes.Cut(frame, sosMarker)
 	if !found {
-		return nil, fmt.Errorf("SOS marker not found in frame")
+		return nil, fmt.Errorf("SOS marker (0xFFDA) not found in frame")
 	}
+
 	var buf bytes.Buffer
-	for _, segment := range [][]byte{start, dhtMarker, dht, sosMarker, end} {
-		if _, err := buf.Write(segment); err != nil {
-			return nil, fmt.Errorf("failed to write to buffer: %w", err)
-		}
-	}
+	buf.Grow(len(frame) + len(dhtMarker) + len(dht))
+	// Segments: [Start of image until SOS] + [DHT Marker] + [DHT Data] + [SOS Marker] + [Rest of image]
+	buf.Write(start)
+	buf.Write(dhtMarker)
+	buf.Write(dht)
+	buf.Write(sosMarker)
+	buf.Write(end)
+
 	return buf.Bytes(), nil
 }
 
@@ -468,7 +461,7 @@ func getAvgPixelColor(frame []byte) (*passport.Pixel, error) {
 	var greenSum float64
 	var blueSum float64
 	bounds := img.Bounds()
-	for y := bounds.Min.Y; y < bounds.Max.X; y++ {
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
 		for x := bounds.Min.X; x < bounds.Max.X; x++ {
 			pixelXY := color.RGBAModel.Convert(img.At(x, y)).(color.RGBA)
 			redSum += float64(pixelXY.R)
