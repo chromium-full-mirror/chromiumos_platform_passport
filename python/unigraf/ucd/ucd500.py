@@ -67,6 +67,8 @@ class Ucd500Server(server.UcdServer):
             self._role.pdcrx.capabilities.set_initial_role(
                 UniTAP.pdc.PdcDeviceRole.UFP
             )
+            # Disable PR swap to avoid triggering PDC bugs, this should force snk
+            self._role.pdcrx.capabilities.enable_pr_swap(False)
             self._role.pdcrx.capabilities.cc_pull_up(
                 UniTAP.pdc.CCPullUp.Current_3A
             )
