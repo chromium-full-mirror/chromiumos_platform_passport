@@ -115,7 +115,7 @@ func LaunchPythonBridgefAndGetPort(binPath string, portArg int64, deviceType str
 	case err := <-errChan:
 		pipeReader.Close()
 		return 0, nil, err
-	case <-time.After(15 * time.Second):
+	case <-time.After(45 * time.Second):
 		KillPythonControl(cmd)
 		pipeReader.Close()
 		return 0, nil, fmt.Errorf("timed out waiting for app to start")
