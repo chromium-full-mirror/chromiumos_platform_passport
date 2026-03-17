@@ -31,7 +31,7 @@ SCRIPT_DIR="$(dirname "$(realpath -e "${BASH_SOURCE[0]}")")"
 PROJECT_DIR="$(realpath -e "${SCRIPT_DIR}/..")"
 SSH_CMD="ssh -q -o StrictHostKeyChecking=no"
 SATLAB_KEY_FILE="/home/satlab/keys/pubsub-key-do-not-delete.json"
-PASSSPORT_DOCKER_IMAGE="us-docker.pkg.dev/cros-passport/passport/passport:latest"
+PASSPORT_DOCKER_IMAGE="us-docker.pkg.dev/cros-passport/passport/passport"
 LOG_DIVIDER="=================================================================="
 HOSTS=()
 
@@ -85,7 +85,7 @@ function start_passport_service() {
       --rm \
       -p 8300:8300 --privileged \
       --name "passport-dev" \
-      "${PASSSPORT_DOCKER_IMAGE}${ARCH}" cros-passport --log-level DEBUG
+      "$1" cros-passport --log-level DEBUG
 
   # Get the IP address of the container and echo forwarding command for testing.
   IP=$(${SSH_CMD} "${HOST}" \
@@ -117,25 +117,25 @@ if [[ -z "${BUILD_FROM_LOCAL}" ]]; then
   # Try to login using remote keyfile.
   if ${SSH_CMD} "${HOST}" "${DOCKER_CMD} exec -i compose sh -c 'cat \"${SATLAB_KEY_FILE}\" | /usr/local/bin/docker login -u _json_key --password-stdin us-docker.pkg.dev/cros-passport'"; then
     echo "Pulling docker image using remote credentials"
-    if ${SSH_CMD} "${HOST}" "${DOCKER_CMD} exec -i compose sh -c '/usr/local/bin/docker pull ${PASSSPORT_DOCKER_IMAGE}'"; then
+    if ${SSH_CMD} "${HOST}" "${DOCKER_CMD} exec -i compose sh -c '/usr/local/bin/docker pull ${PASSPORT_DOCKER_IMAGE}'"; then
       echo "Pulled docker using remote docker"
     fi
   # Use local docker credentials by specifying DOCKER_HOST
-  elif ! DOCKER_HOST=ssh://${HOST} docker pull "${PASSSPORT_DOCKER_IMAGE}"; then
+  elif ! DOCKER_HOST=ssh://${HOST} docker pull "${PASSPORT_DOCKER_IMAGE}"; then
     echo "ERROR: failed to pull latest passport docker image"
     exit 1
   fi
 
   stop_passport_service
-  start_passport_service
+  start_passport_service ${PASSPORT_DOCKER_IMAGE}
   exit 0
 fi
 
 # else build from local source then push to remote host(s)
 echo "Building docker image"
-BUILD_FLAGS=""
+BUILD_FLAGS="--tag=dev"
 if [[ "${INCLUDE_ARM}" == true ]]; then
-  BUILD_FLAGS="--include-arm"
+  BUILD_FLAGS="--platforms=linux/amd64,linux/arm64 --tag=dev"
 fi
 "${SCRIPT_DIR}/build_docker.sh" ${BUILD_FLAGS}
 
@@ -161,11 +161,11 @@ for HOST in "${HOSTS[@]}"; do
 
   echo "Copying image to host"
   scp -o StrictHostKeyChecking=no \
-      "${TEMP_DIR}/passport${ARCH}.tar" \
+      "${TEMP_DIR}/passport-linux${ARCH}.tar" \
       "${HOST}:/tmp/passport.tar"
 
   echo "Starting container"
   ${SSH_CMD} "${HOST}" "${DOCKER_CMD}" load -i /tmp/passport.tar
 
-  start_passport_service
+  start_passport_service ${PASSPORT_DOCKER_IMAGE}:dev-local-linux${ARCH}
 done

@@ -18,12 +18,12 @@ The service can be started in `server` mode by running:
 ### With Docker
 #### Local Machine
 The service can be built on your local machine by running `./scripts/build_docker.sh`.
-By default this only builds for `amd64`. To include `arm64` use the `--include-arm` flag.
+By default this only builds for `amd64`. To include `arm64` use the `--platforms` flag.
 
 If you want to use TOT rather than your local checkout you should add
-the `REMOTE_SOURCE` variable to your build command e.g.
+the `--remote_source` flag to your build command e.g.
 ```
-REMOTE_SOURCE=1 ./scripts/build_docker.sh --include-arm
+./scripts/build_docker.sh --platforms=linux/amd64,linux/arm64 --remote_source
 ```
 
 The container can be started on your local machine by running
@@ -102,7 +102,7 @@ The lab run versions are built from the
 To update development version simply run:
 
 ```bash
-PUSH=1 REMOTE_SOURCE=1 ./scripts/build_docker.sh
+./scripts/build_docker.sh --push --remote_source --tag latest
 ```
 
 Once that has been updated the staging version for the lab should get built and
