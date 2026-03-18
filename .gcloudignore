@@ -1,0 +1,11 @@
+# Local go files.
+/go/bin
+/go/pkg
+
+# Build artifacts
+*.tar
+
+# Python
+env/
+venv/
+__pycache__/

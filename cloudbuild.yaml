@@ -1,0 +1,36 @@
+# Copyright 2026 The ChromiumOS Authors
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+timeout: '1200s'
+
+steps:
+- name: 'gcr.io/cloud-builders/docker'
+  id: 'Build and push'
+  entrypoint: 'bash'
+  env:
+    # This affects the docker client, not script args
+    - 'DOCKER_CLI_EXPERIMENTAL=enabled'
+  args:
+    - 'scripts/build_docker.sh'
+    # Boolean flags
+    - '--remote_source'
+    - '--push'
+    # GCB user-defined substitutions
+    - '--ar_region=${_AR_REGION}'
+    - '--ar_repository=${_AR_REPOSITORY}'
+    - '--image_name=${_IMAGE_NAME}'
+    - '--tag=${_TAG}'
+    - '--platforms=${_PLATFORMS}'
+    # GCB Built-in substitutions
+    - '--project_id=${PROJECT_ID}'
+    - '--short_sha=${SHORT_SHA}'
+    - '--branch_name=${BRANCH_NAME}'
+
+substitutions:
+  _AR_REGION: "us"
+  _AR_REPOSITORY: "passport"
+  _IMAGE_NAME: "passport"
+  _TAG: "staging"
+  _PLATFORMS: "linux/amd64,linux/arm64"
+
+# Note: images can't be used with multi-arch images.

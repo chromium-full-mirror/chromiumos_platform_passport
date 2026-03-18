@@ -124,6 +124,8 @@ if [[ "${PUSH}" == true ]]; then
 
     docker buildx build \
         --platform="${PLATFORMS}" \
+        --cache-from "type=registry,ref=${IMAGE_BASE}:${TAG}" \
+        --cache-to "type=registry,ref=${IMAGE_BASE}:${TAG},mode=max" \
         "${BUILD_TAGS[@]}" \
         ${FLAGS} \
         --push \
