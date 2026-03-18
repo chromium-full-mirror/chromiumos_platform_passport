@@ -237,3 +237,12 @@ func (s *videoTesterPlugin) StopEventCapture(
 	// Call the StopEventCapture method of the found plugin.
 	return s.unigraf_control_client.StopEventCapture(ctx, req)
 }
+
+// Runs PowerCycle.
+func (s *videoTesterPlugin) PowerCycle(
+	ctx context.Context,
+	req *passport.PowerCycleRequest,
+) (*passport.PowerCycleResponse, error) {
+	// Call the PowerCycle method of the found plugin.
+	return s.unigraf_control_client.PowerCycle(ctx, req)
+}

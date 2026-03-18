@@ -408,3 +408,21 @@ func (s *videoTesterServiceServer) StopEventCapture(
 		fmt.Sprintf("there is no tester with id: %s", req.Id),
 	)
 }
+
+// Runs PowerCycle.
+func (s *videoTesterServiceServer) PowerCycle(
+	ctx context.Context,
+	req *passport.PowerCycleRequest,
+) (*passport.PowerCycleResponse, error) {
+
+	if tester, ok := s.testerMap[req.Id]; ok {
+		// Call the PowerCycle method of the found plugin.
+		return tester.PowerCycle(ctx, req)
+	}
+
+	// If no plugin is found for the given ID, return a NotFound error.
+	return nil, status.Errorf(
+		codes.NotFound,
+		fmt.Sprintf("there is no tester with id: %s", req.Id),
+	)
+}

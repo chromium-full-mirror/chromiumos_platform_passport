@@ -39,17 +39,6 @@ class Ucd422Server(server.UcdServer):
         super().__init__("UCD-422")
 
     @log_functionality.logger
-    def SetRoleVideoTester(self, request, _):
-        """Selects a specific role for a given video tester."""
-        self._check_serial_active(request.id)
-
-        self._role = self._dev.select_role(translate.UCD_ROLES[request.role])
-        logging.info("Role was selected successfully.")
-        self._port_rx = self._role.hdrx
-
-        return video_pb2.SetRoleResponse(success=True)
-
-    @log_functionality.logger
     def SetLinkVideoTester(self, request, context):
         """Sets advanced link parameters for a given video tester."""
         self._check_serial_active(request.id)
@@ -154,6 +143,11 @@ class Ucd422Server(server.UcdServer):
 
         logging.info("NoOp StopEventCapture")
         return video_pb2.StopEventCaptureResponse()
+
+    def _role_set_quirks(self, role_to_set):
+        self._role = self._dev.select_role(role_to_set)
+        logging.info("Role was selected successfully.")
+        self._port_rx = self._role.hdrx
 
     @log_functionality.logger
     def _get_number_of_video_streams(self):

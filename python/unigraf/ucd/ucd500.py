@@ -38,45 +38,7 @@ class Ucd500Server(server.UcdServer):
     @log_functionality.logger
     def __init__(self):
         super().__init__("UCD-500")
-
         logging.info("VideoTesterServiceServicer init done")
-
-    @log_functionality.logger
-    def SetRoleVideoTester(self, request, _):
-        """Selects a specific role for a given video tester."""
-
-        if request.id != self._serial:
-            raise RuntimeError(
-                f"Serials dont match, got {request.id} expected {self._serial}"
-            )
-
-        if request.role not in translate.UCD_ROLES:
-            raise RuntimeError(f"Role is unknwon {request.role}")
-
-        self._role = self._dev.select_role(translate.UCD_ROLES[request.role])
-        self._port_rx = self._role.dprx
-        self._port_tx = self._role.dptx
-        self._dev.opf_handler = UniTAP.OpfHandlerInternal(
-            port_tx=self._port_tx,
-            port_rx=self._port_rx,
-        )
-        logging.info("Role was selected successfully.")
-
-        if isinstance(self._role, UniTAP.dev.UCD500.USBCSourceUSBCSink):
-            logging.info("Set USB-PD to UFP.")
-            self._role.pdcrx.capabilities.set_initial_role(
-                UniTAP.pdc.PdcDeviceRole.UFP
-            )
-            # Disable PR swap to avoid triggering PDC bugs, this should force snk
-            self._role.pdcrx.capabilities.enable_pr_swap(False)
-            self._role.pdcrx.capabilities.cc_pull_up(
-                UniTAP.pdc.CCPullUp.Current_3A
-            )
-
-            self._role.pdcrx.controls.reconnect()
-            time.sleep(5)
-
-        return video_pb2.SetRoleResponse(success=True)
 
     @log_functionality.logger
     def SetLinkVideoTester(self, request, context):
@@ -283,3 +245,27 @@ class Ucd500Server(server.UcdServer):
                 dptx_capture_html=f_tx.read(),
                 dprx_capture_html=f_rx.read(),
             )
+
+    def _role_set_quirks(self, role_to_set):
+        self._role = self._dev.select_role(role_to_set)
+        self._port_rx = self._role.dprx
+        self._port_tx = self._role.dptx
+        self._dev.opf_handler = UniTAP.OpfHandlerInternal(
+            port_tx=self._port_tx,
+            port_rx=self._port_rx,
+        )
+        logging.info("Role was selected successfully.")
+
+        if isinstance(self._role, UniTAP.dev.UCD500.USBCSourceUSBCSink):
+            logging.info("Set USB-PD to UFP.")
+            self._role.pdcrx.capabilities.set_initial_role(
+                UniTAP.pdc.PdcDeviceRole.UFP
+            )
+            # Disable PR swap to avoid triggering PDC bugs, this should force snk
+            self._role.pdcrx.capabilities.enable_pr_swap(False)
+            self._role.pdcrx.capabilities.cc_pull_up(
+                UniTAP.pdc.CCPullUp.Current_3A
+            )
+
+            self._role.pdcrx.controls.reconnect()
+            time.sleep(5)

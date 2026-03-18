@@ -27,6 +27,7 @@ import grpc
 from ucd import translate
 import UniTAP
 
+from utils import constants
 from utils import log_functionality
 
 
@@ -55,6 +56,7 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
     - HpdPulseVideoTester
     - AttachVideoTester
     - _get_number_of_video_streams
+    - _role_set_quirks
     """
 
     @log_functionality.logger
@@ -64,6 +66,7 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
         self._role = None
         self._port_rx = None
         self._port_tx = None
+        self._last_requested_role = None
         self._device_name = device_name
 
         self._tsilib = UniTAP.TsiLib()
@@ -72,10 +75,6 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
         logging.info("%sServer init done", self._device_name)
 
     # =========== Not implemented methods ===========
-    def SetRoleVideoTester(self, request, context):
-        """Selects a specific role for a given video tester."""
-        raise NotImplementedError("Method not implemented!")
-
     def SetLinkVideoTester(self, request, context):
         """Sets advanced link parameters for a given video tester."""
         raise NotImplementedError("Method not implemented!")
@@ -101,6 +100,9 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
         raise NotImplementedError("Method not implemented!")
 
     def _get_number_of_video_streams(self):
+        raise RuntimeError("Method is not implemented!")
+
+    def _role_set_quirks(self, role_to_set):
         raise RuntimeError("Method is not implemented!")
 
     # =========== Common methods ===========
@@ -132,6 +134,23 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
             )
 
         return video_pb2.GetVideoTestersResponse(testers=ret)
+
+    @log_functionality.logger
+    def SetRoleVideoTester(self, request, _):
+        """Selects a specific role for a given video tester."""
+
+        if request.id != self._serial:
+            raise RuntimeError(
+                f"Serials dont match, got {request.id} expected {self._serial}"
+            )
+
+        if request.role not in translate.UCD_ROLES:
+            raise RuntimeError(f"Role is unknown {request.role}")
+
+        self._last_requested_role = translate.UCD_ROLES[request.role]
+        self._role_set_quirks(self._last_requested_role)
+
+        return video_pb2.SetRoleResponse(success=True)
 
     @log_functionality.logger
     def OpenVideoTester(self, request, context):
@@ -336,6 +355,7 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
 
         return video_pb2.GetStreamInfoVideoTesterResponse(streams=res)
 
+    @log_functionality.logger
     def GetRolesVideoTester(self, request, _):
         """Gets the list of supported roles."""
 
@@ -347,6 +367,23 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
             ret.append(inv_role_map[role])
 
         return video_pb2.GetRolesResponse(roles=ret)
+
+    @log_functionality.logger
+    def PowerCycle(self, request, context):
+        """Power cycle the video tester."""
+
+        self._dev.reset()
+        # We need to sleep while the reset is taking place, the expected time
+        # for this operation is 20 seconds, we sleep 30 to have some leeway.
+        time.sleep(constants.UCD_HW_RESET_TIMEOUT_S)
+        self._dev.close()
+
+        # Reopen the device and set the same role
+        self._dev = self._tsilib.open(request.id)
+        if self._last_requested_role:
+            self._role_set_quirks(self._last_requested_role)
+
+        return video_pb2.PowerCycleResponse()
 
     def _check_serial_active(self, serial):
         if self._serial is None:
