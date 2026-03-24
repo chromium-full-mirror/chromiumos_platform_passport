@@ -322,7 +322,7 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
         serial = request.id
         ret = 0
         with self._device_access(serial) as dev:
-            ret = dev.hw.pdc_reset()
+            ret = dev.sys_reboot()
 
         return usb_tester_service_pb2.HardResetTesterReply(
             err_code=ret,
