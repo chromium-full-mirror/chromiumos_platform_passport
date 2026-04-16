@@ -171,7 +171,7 @@ install() {
     if [[ "${arch}" == "aarch64" || "${arch}" == "arm64" ]]; then
       build_flags="--platforms linux/amd64,linux/arm64"
     fi
-    if ! /bin/bash "${build_script_path}" --remote-source ${build_flags}; then
+    if ! /bin/bash "${build_script_path}" --remote_source ${build_flags}; then
       echo "Error: Failed to build docker images." >&2
       exit 1
     fi
