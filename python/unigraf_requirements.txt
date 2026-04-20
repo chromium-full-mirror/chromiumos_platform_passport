@@ -407,8 +407,8 @@ urllib3==2.5.0 \
     --hash=sha256:3fc47733c7e419d4bc3f6b3dc2b4f890bb743906a30d56ba4a5bfa4bbff92760 \
     --hash=sha256:e6b01673c0fa6a13e374b50871808eb3bf7046c4b125b216f6bf1cc604cff0dc
     # via requests
-utclibrary @ file:///usr/local/bin/unigraf/UTCLibrary-1.1.46.777.tar.gz \
-    --hash=sha256:8d8e67820ac1ccc164ca8bbb1d3f5882628fdd6c462f24913ae5612d54eb81ab
+utclibrary @ file:///usr/local/bin/unigraf/UTCLibrary-1.1.57.809.tar.gz \
+    --hash=sha256:75af482ef2d30f64c1b135585a3c4401d640a16140c64c1963ecc999dd00e044
     # via -r unigraf_requirements.in
 wget==3.2 \
     --hash=sha256:35e630eca2aa50ce998b9b1a127bb26b30dfee573702782aa982f875e3f16061
