@@ -14,6 +14,7 @@ import (
 	"image/jpeg"
 	"io"
 	"log/slog"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -58,7 +59,123 @@ type cameraPlugin struct{}
 
 // GetCameras probes all cameras connected to the host device.
 func (s *cameraPlugin) GetCameras(ctx context.Context, req *passport.GetCamerasRequest) (*passport.GetCamerasResponse, error) {
-	slog.Info("Probing cameras")
+	slog.Info("Probing cameras using /sys/bus/usb/devices/")
+	mapping, err := findCameras("")
+	if err != nil {
+		slog.Warn("Failed to probe cameras via sysfs, falling back to /dev/video*", "error", err)
+		return s.getCamerasFallback(ctx, req)
+	}
+
+	var cameras []*passport.Camera
+	for serial, info := range mapping {
+		slog.Info("Found valid camera", "port", info.devPath, "serial", serial, "name", info.name)
+		cameras = append(cameras,
+			&passport.Camera{
+				Id:   serial,
+				Name: info.name,
+			})
+	}
+
+	// If no cameras found via sysfs, fallback to /dev/video*
+	if len(cameras) == 0 {
+		slog.Warn("No cameras found via sysfs, falling back to /dev/video*")
+		return s.getCamerasFallback(ctx, req)
+	}
+
+	slog.Info("Detected cameras", "count", len(cameras))
+	return &passport.GetCamerasResponse{
+		Cameras: cameras,
+	}, nil
+}
+
+type cameraInfo struct {
+	devPath string
+	name    string
+}
+
+// findCameras searches for cameras in /sys/bus/usb/devices/ and returns a map of serial -> cameraInfo.
+// If targetSerial is provided, it returns as soon as it finds that specific camera.
+func findCameras(targetSerial string) (map[string]cameraInfo, error) {
+	mapping := make(map[string]cameraInfo)
+	devices, err := filepath.Glob("/sys/bus/usb/devices/*")
+	if err != nil {
+		return nil, fmt.Errorf("failed to glob /sys/bus/usb/devices/*: %w", err)
+	}
+
+	for _, devDir := range devices {
+		base := filepath.Base(devDir)
+		if strings.Contains(base, ":") {
+			continue
+		}
+
+		serialPath := filepath.Join(devDir, "serial")
+		serialBytes, err := os.ReadFile(serialPath)
+		if err != nil {
+			continue
+		}
+		serial := strings.TrimSpace(string(serialBytes))
+		if serial == "" {
+			continue
+		}
+
+		if targetSerial != "" && serial != targetSerial {
+			continue
+		}
+
+		// Find video nodes for this device
+		interfaces, err := filepath.Glob(filepath.Join(devDir, base+":*"))
+		if err != nil {
+			continue
+		}
+		for _, iface := range interfaces {
+			v4lDir := filepath.Join(iface, "video4linux")
+			if _, err := os.Stat(v4lDir); err != nil {
+				continue
+			}
+			videoNodes, err := filepath.Glob(filepath.Join(v4lDir, "video*"))
+			if err != nil || len(videoNodes) == 0 {
+				continue
+			}
+
+			for _, node := range videoNodes {
+				nodeName := filepath.Base(node)
+				devPath := "/dev/" + nodeName
+
+				cam, err := webcam.Open(devPath)
+				if err != nil {
+					continue
+				}
+
+				if !supportsJpeg(cam) {
+					cam.Close()
+					continue // Skip metadata devices
+				}
+
+				// Camera name is optional.
+				name, err := cam.GetName()
+				if err != nil {
+					name = err.Error()
+				}
+
+				mapping[serial] = cameraInfo{devPath: devPath, name: name}
+				cam.Close()
+				if targetSerial != "" {
+					return mapping, nil // Found the requested one
+				}
+				break // Found one valid node for this serial, move to next device
+			}
+			if _, ok := mapping[serial]; ok && targetSerial == "" {
+				break // Move to next device
+			}
+		}
+	}
+
+	return mapping, nil
+}
+
+// getCamerasFallback probes cameras using /dev/video* as a fallback.
+func (s *cameraPlugin) getCamerasFallback(ctx context.Context, req *passport.GetCamerasRequest) (*passport.GetCamerasResponse, error) {
+	slog.Info("Probing cameras using /dev/video* (fallback)")
 	ports, err := filepath.Glob("/dev/video*")
 	if err != nil {
 		return nil, fmt.Errorf("failed to probe for video devices: %w", err)
@@ -73,10 +190,10 @@ func (s *cameraPlugin) GetCameras(ctx context.Context, req *passport.GetCamerasR
 			slog.Warn("Failed to open port on device", "port", port)
 			continue
 		}
-		defer cam.Close()
 
 		if !supportsJpeg(cam) {
 			slog.Warn("Skipping camera, Motion-JPEG format not supported", "port", port)
+			cam.Close()
 			continue
 		}
 
@@ -87,30 +204,23 @@ func (s *cameraPlugin) GetCameras(ctx context.Context, req *passport.GetCamerasR
 				slog.Warn("Retrying", "port", port)
 				retries++
 				i--
-				cam.Close()
 			}
+			cam.Close()
 			continue
 		}
 
-		// Camera name is optional.
 		name, err := cam.GetName()
 		if err != nil {
 			name = err.Error()
 		}
 
-		controls := cam.GetControls()
-		for _, control := range controls {
-			slog.Info("Control", "name", control.Name, "type", control.Type, "min", control.Min, "max", control.Max, "step", control.Step)
-		}
-
-		// Cameras use their /dev/video* device path as ID, getting the device
-		// serial is more involved for little benefit.
 		slog.Info("Found valid camera", "port", port, "name", name)
 		cameras = append(cameras,
 			&passport.Camera{
 				Id:   port,
 				Name: name,
 			})
+		cam.Close()
 	}
 
 	slog.Info("Detected cameras", "count", len(cameras))
@@ -119,9 +229,31 @@ func (s *cameraPlugin) GetCameras(ctx context.Context, req *passport.GetCamerasR
 	}, nil
 }
 
+// resolveDevicePath resolves a camera ID (serial or path) to a /dev/video* path.
+func resolveDevicePath(id string) (string, error) {
+	if strings.HasPrefix(id, "/dev/video") {
+		return id, nil
+	}
+
+	mapping, err := findCameras(id)
+	if err != nil {
+		return "", err
+	}
+
+	if info, ok := mapping[id]; ok {
+		return info.devPath, nil
+	}
+
+	return "", fmt.Errorf("camera with serial %s not found", id)
+}
+
 // GetAveragePixel gets the average pixel color detected by the specified camera.
 func (s *cameraPlugin) GetAveragePixel(ctx context.Context, req *passport.GetAveragePixelRequest) (*passport.GetAveragePixelResponse, error) {
-	frame, err := captureFrame(ctx, req.GetDeviceId(), req.GetExposureMicroseconds())
+	devPort, err := resolveDevicePath(req.GetDeviceId())
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve device path: %w", err)
+	}
+	frame, err := captureFrame(ctx, devPort, req.GetExposureMicroseconds())
 	if err != nil {
 		return nil, fmt.Errorf("cannot get average pixel, failed to capture frame: %w", err)
 	}
@@ -138,7 +270,11 @@ func (s *cameraPlugin) GetAveragePixel(ctx context.Context, req *passport.GetAve
 
 // AnalyzeImageHSV gets the average pixel color detected by the specified camera.
 func (s *cameraPlugin) AnalyzeImageHSV(ctx context.Context, req *passport.AnalyzeHSVRequest) (*passport.AnalyzeHSVResponse, error) {
-	frame, err := captureFrame(ctx, req.GetDeviceId(), req.GetExposureMicroseconds())
+	devPort, err := resolveDevicePath(req.GetDeviceId())
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve device path: %w", err)
+	}
+	frame, err := captureFrame(ctx, devPort, req.GetExposureMicroseconds())
 	if err != nil {
 		return nil, fmt.Errorf("cannot analyze image HSV, failed to capture frame: %w", err)
 	}
@@ -179,17 +315,31 @@ func (s *cameraPlugin) AnalyzeImageHSV(ctx context.Context, req *passport.Analyz
 
 // CaptureVideo captures a tiled video from multiple cameras using ffmpeg directly.
 func (s *cameraPlugin) CaptureVideo(req *passport.CaptureVideoRequest, stream passport.CameraService_CaptureVideoServer) error {
-	slog.Info("Capturing tiled video using ffmpeg v4l2", "ports", req.GetDeviceIds(), "duration", req.GetDurationSeconds())
+	slog.Info("Capturing tiled video using ffmpeg v4l2", "ids", req.GetDeviceIds(), "duration", req.GetDurationSeconds())
+
+	// Resolve all IDs first
+	ports := make([]string, 0, len(req.GetDeviceIds()))
+	serials := make([]string, 0, len(req.GetDeviceIds()))
+	for _, id := range req.GetDeviceIds() {
+		devPort, err := resolveDevicePath(id)
+		if err != nil {
+			slog.Warn("Failed to resolve device path", "id", id, "error", err)
+			continue
+		}
+		ports = append(ports, devPort)
+		serials = append(serials, id)
+	}
 
 	// Set auto-exposure for all cameras before starting ffmpeg
-	for _, id := range req.GetDeviceIds() {
-		cam, err := webcam.Open(id)
+	for i, port := range ports {
+		serial := serials[i]
+		cam, err := webcam.Open(port)
 		if err != nil {
-			slog.Warn("Failed to open camera to set auto-exposure", "port", id, "error", err)
+			slog.Warn("Failed to open camera to set auto-exposure", "port", port, "serial", serial, "error", err)
 			continue
 		}
 		if err := setManualExposure(cam, 0); err != nil {
-			slog.Warn("Failed to set auto-exposure", "port", id, "error", err)
+			slog.Warn("Failed to set auto-exposure", "port", port, "serial", serial, "error", err)
 		}
 		cam.Close()
 	}
@@ -197,13 +347,14 @@ func (s *cameraPlugin) CaptureVideo(req *passport.CaptureVideoRequest, stream pa
 	// ffmpeg -f v4l2 -input_format mjpeg -video_size 640x480 -i /dev/video0 ...
 	args := []string{}
 	filter := ""
-	for i, id := range req.GetDeviceIds() {
-		args = append(args, "-f", "v4l2", "-input_format", "mjpeg", "-video_size", "640x480", "-i", id)
+	for i, port := range ports {
+		serial := serials[i]
+		args = append(args, "-f", "v4l2", "-input_format", "mjpeg", "-video_size", "640x480", "-i", port)
 		// Label each stream: [v0], [v1], etc.
-		filter += fmt.Sprintf("[%d:v]drawtext=text='%s':fontcolor=white:fontsize=24:box=1:boxcolor=black@0.5:boxborderw=5:x=10:y=10[v%d];", i, id, i)
+		filter += fmt.Sprintf("[%d:v]drawtext=text='%s (%s)':fontcolor=white:fontsize=24:box=1:boxcolor=black@0.5:boxborderw=5:x=10:y=10[v%d];", i, serial, port, i)
 	}
 
-	num := len(req.GetDeviceIds())
+	num := len(ports)
 	if num > 1 {
 		var layout string
 		switch num {
@@ -220,9 +371,9 @@ func (s *cameraPlugin) CaptureVideo(req *passport.CaptureVideoRequest, stream pa
 		}
 		filter += fmt.Sprintf("xstack=inputs=%d:layout=%s", num, layout)
 		args = append(args, "-filter_complex", filter)
-	} else {
+	} else if num == 1 {
 		// Single camera, still add overlay
-		args = append(args, "-vf", fmt.Sprintf("drawtext=text='%s':fontcolor=white:fontsize=24:box=1:boxcolor=black@0.5:boxborderw=5:x=10:y=10", req.GetDeviceIds()[0]))
+		args = append(args, "-vf", fmt.Sprintf("drawtext=text='%s (%s)':fontcolor=white:fontsize=24:box=1:boxcolor=black@0.5:boxborderw=5:x=10:y=10", serials[0], ports[0]))
 	}
 
 	args = append(args,
