@@ -75,6 +75,11 @@ func (s *cameraPlugin) GetCameras(ctx context.Context, req *passport.GetCamerasR
 		}
 		defer cam.Close()
 
+		if !supportsJpeg(cam) {
+			slog.Warn("Skipping camera, Motion-JPEG format not supported", "port", port)
+			continue
+		}
+
 		err = cam.StartStreaming()
 		if err != nil {
 			slog.Warn("Failed to start streaming on camera", "port", port, "error", err)
@@ -84,11 +89,6 @@ func (s *cameraPlugin) GetCameras(ctx context.Context, req *passport.GetCamerasR
 				i--
 				cam.Close()
 			}
-			continue
-		}
-
-		if !supportsJpeg(cam) {
-			slog.Warn("Skipping camera, Motion-JPEG format not supported", "port", port)
 			continue
 		}
 
