@@ -51,6 +51,7 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
         self._last_access_time = {}
         self._devices_dict_lock = threading.Lock()
         self.SDK_F_MAP = translate.SDK_F_MAP
+        self.SELECT_SAFETY_DELAY_S_FMAP = translate.SELECT_SAFETY_DELAY_S_FMAP
 
         self._cleanup_thread = threading.Thread(
             target=self._cleanup_inactive_devices, daemon=True
@@ -151,13 +152,26 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
         with self._device_access(serial) as dev:
             try:
                 set_f = operator.attrgetter(self.SDK_F_MAP[attr][1])(dev)
+                get_f = operator.attrgetter(self.SDK_F_MAP[attr][0])(dev)
             except Exception as e:
                 logging.error(
                     "An error occurred during device reflection: %s", str(e)
                 )
                 raise e
 
-            ret = set_f(arg=val, delay_ms=constants.UTC_274_DELAY_MS)
+            ret = 0
+            curr_value = get_f()
+            if curr_value != val:
+                logging.info(f"Setting {attr} to {val}")
+                ret = set_f(arg=val)
+                delay = self.SELECT_SAFETY_DELAY_S_FMAP.get(attr)
+                if delay:
+                    time.sleep(delay)
+            else:
+                logging.info(
+                    f"Skipping {attr} because current val is the same as set val {val}"
+                )
+
         return ret
 
     def GetTesterCapability(self, request, _context):
@@ -279,10 +293,9 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
 
             if active_port != to_set:
                 # TODO (b/450467364): remove this workaround when the FW fixes it.
-                dev.dp.hpd_vdm_irq_control(delay_ms=constants.UTC_274_DELAY_MS)
+                dev.dp.hpd_vdm_irq_control()
                 set_status = dev.hw.select_active_port(
                     arg=to_set,
-                    delay_ms=constants.UTC_274_DELAY_MS,
                 )
                 time.sleep(constants.UTC_274_STABILITY_S)
 
@@ -308,7 +321,7 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
         ret = 0
         with self._device_access(serial) as dev:
             # TODO (b/450467364): remove this workaround when the FW fixes it.
-            dev.dp.hpd_vdm_irq_control(delay_ms=constants.UTC_274_DELAY_MS)
+            dev.dp.hpd_vdm_irq_control()
             ret = dev.pd.replug()
             time.sleep(constants.UTC_274_STABILITY_S)
 
@@ -340,7 +353,7 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
                 ret = dev.pd.soft_reset()
             else:
                 # TODO (b/450467364): remove this workaround when the FW fixes it.
-                dev.dp.hpd_vdm_irq_control(delay_ms=constants.UTC_274_DELAY_MS)
+                dev.dp.hpd_vdm_irq_control()
                 ret = dev.pd.hard_reset()
                 time.sleep(constants.UTC_274_STABILITY_S)
 

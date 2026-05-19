@@ -13,6 +13,8 @@ from enum import Enum
 # pylint: disable=import-error
 from chromiumos.test.lab.api.passport import usb_tester_service_pb2
 
+from utils import constants
+
 
 # pylint: enable=import-error
 
@@ -134,6 +136,13 @@ SDK_F_MAP = {
         "pd.update_nonpd_current_load",
         "pd.select_nonpd_current_load",
     ],
+}
+
+SELECT_SAFETY_DELAY_S_FMAP = {
+    usb_tester_service_pb2.ACTIVE_CC: 3,
+    usb_tester_service_pb2.INIT_PD_STATE: 3,
+    usb_tester_service_pb2.POWER_DELIVERY: 3,
+    usb_tester_service_pb2.DISPLAY_PORT_AM: 3,
 }
 
 CAPABILITY_RETURN_FIELD_MAP = {
