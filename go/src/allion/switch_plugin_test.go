@@ -91,6 +91,15 @@ func TestParseAllionSwitch(t *testing.T) {
 			commands: commandMap{SwitchDisabled: "2"},
 		},
 		{
+			name:     "AUS24080",
+			text:     "AUS24080_B00_01_2508281200",
+			isAllion: true,
+			model:    "AUS24080",
+			id:       "2408001",
+			version:  2508281200,
+			commands: commandMap{SwitchDisabled: "5"},
+		},
+		{
 			name: "XXXXXXXX",
 			text: "XXXXXXXX_XXX_XX_XXXXXXXXXX",
 		},

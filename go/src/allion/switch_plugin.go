@@ -46,6 +46,7 @@ var (
 		"AUS22095": {newVersionedCommand(maxTime, commandMap{SwitchDisabled: "3"})},
 		"AHS24067": {newVersionedCommand(maxTime, commandMap{SwitchDisabled: "3"})},
 		"ADS24068": {newVersionedCommand(maxTime, commandMap{SwitchDisabled: "3"})},
+		"AUS24080": {newVersionedCommand(maxTime, commandMap{SwitchDisabled: "5"})},
 	}
 
 	// switchEnabledByPortIdCommands maps switch model ID to a command map for enabling that specific switch by port ID
@@ -58,6 +59,7 @@ var (
 		"AUS22095": {defaultPort: "1", "A": "1", "B": "2"},
 		"AHS24067": {defaultPort: "1"},
 		"ADS24068": {defaultPort: "1"},
+		"AUS24080": {defaultPort: "1", "A": "1", "B": "2", "C": "3", "D": "4"},
 	}
 )
 
