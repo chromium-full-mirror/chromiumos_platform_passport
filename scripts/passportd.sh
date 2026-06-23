@@ -165,13 +165,13 @@ install() {
   echo "Running build script to create docker image tarballs..."
   (
     cd "${scripts_dir}"
-    local build_flags=""
+    local build_flags="--platforms amd64"
     local arch
     arch=$(uname -m)
     if [[ "${arch}" == "aarch64" || "${arch}" == "arm64" ]]; then
-      build_flags="--platforms linux/amd64,linux/arm64"
+      build_flags="--platforms amd64,arm64"
     fi
-    if ! /bin/bash "${build_script_path}" --remote_source ${build_flags}; then
+    if ! /bin/bash "${build_script_path}" --remote_source --tag latest ${build_flags}; then
       echo "Error: Failed to build docker images." >&2
       exit 1
     fi
@@ -180,9 +180,11 @@ install() {
   echo "Loading docker images..."
   if [ -f "${TEMP_DIR}/passport-amd64.tar" ]; then
     docker load -i "${TEMP_DIR}/passport-amd64.tar"
+    docker tag "${DOCKER_IMAGE_REPO}:latest-local-amd64" "${DOCKER_IMAGE_REPO}:latest-amd64"
   fi
   if [ -f "${TEMP_DIR}/passport-arm64.tar" ]; then
     docker load -i "${TEMP_DIR}/passport-arm64.tar"
+    docker tag "${DOCKER_IMAGE_REPO}:latest-local-arm64" "${DOCKER_IMAGE_REPO}:latest-arm64"
   fi
 
   echo "Installation complete. Verifying..."
