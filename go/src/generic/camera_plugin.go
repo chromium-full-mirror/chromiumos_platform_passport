@@ -430,7 +430,7 @@ func (s *cameraPlugin) CaptureVideo(req *passport.CaptureVideoRequest, stream pa
 func captureFrame(ctx context.Context, devPort string, exposureMicroseconds int32) ([]byte, error) {
 	const settlingTime = 10
 
-	slog.Info("Capturing frame", "port", devPort)
+	slog.Info("Capturing frame", "port", devPort, "requested_exposure_us", exposureMicroseconds)
 
 	cam, err := webcam.Open(devPort)
 	if err != nil {
@@ -458,6 +458,8 @@ func captureFrame(ctx context.Context, devPort string, exposureMicroseconds int3
 		return nil, fmt.Errorf("failed to set manual exposure: %w", err)
 	}
 
+	logAllControls(cam, devPort, "before_settling")
+
 	frameCount := 0
 	for ctx.Err() == nil {
 		err = cam.WaitForFrame(uint32(5) /*timeout*/)
@@ -478,8 +480,13 @@ func captureFrame(ctx context.Context, devPort string, exposureMicroseconds int3
 		frameCount++
 		// Discard the first 10 frames to give the camera a chance to "warm up".
 		if (frameCount < settlingTime) || len(frame) == 0 {
+			if frameCount == settlingTime-1 {
+				logAllControls(cam, devPort, "after_settling")
+			}
 			continue
 		}
+
+		logAllControls(cam, devPort, "after_frame")
 
 		frame, err = addMotionDht(frame)
 		if err != nil {
@@ -627,4 +634,20 @@ func getAvgPixelColor(frame []byte) (*passport.Pixel, error) {
 		G: int32(greenSum / float64(pixelsCount)),
 		B: int32(blueSum / float64(pixelsCount)),
 		A: 255}, nil
+}
+
+
+func logAllControls(cam *webcam.Webcam, devPort string, phase string) {
+	controls := cam.GetControls()
+	var args []any
+	args = append(args, "port", devPort, "phase", phase)
+	for id, ctrl := range controls {
+		val, err := cam.GetControl(id)
+		if err != nil {
+			args = append(args, ctrl.Name, fmt.Sprintf("error: %v", err))
+		} else {
+			args = append(args, ctrl.Name, val)
+		}
+	}
+	slog.Info("Camera controls state", args...)
 }
