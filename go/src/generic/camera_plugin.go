@@ -25,7 +25,10 @@ import (
 	"go.chromiumos.org/chromiumos/platform/passport/server"
 )
 
-const jpegFormat = "Motion-JPEG"
+const (
+	jpegFormat                     = "Motion-JPEG"
+	defaultWhiteBalanceTemperature = 4600
+)
 
 var (
 	// Compression table information that needs to be added to the raw frame to make it usable as a .jpeg file.
@@ -430,7 +433,7 @@ func (s *cameraPlugin) CaptureVideo(req *passport.CaptureVideoRequest, stream pa
 func captureFrame(ctx context.Context, devPort string, exposureMicroseconds int32) ([]byte, error) {
 	const settlingTime = 10
 
-	slog.Info("Capturing frame", "port", devPort, "requested_exposure_us", exposureMicroseconds)
+	slog.Info("Capturing frame", "port", devPort, "requested_exposure_us", exposureMicroseconds, "forced_white_balance_temp", defaultWhiteBalanceTemperature)
 
 	cam, err := webcam.Open(devPort)
 	if err != nil {
@@ -456,6 +459,11 @@ func captureFrame(ctx context.Context, devPort string, exposureMicroseconds int3
 	err = setManualExposure(cam, exposureMicroseconds)
 	if err != nil {
 		return nil, fmt.Errorf("failed to set manual exposure: %w", err)
+	}
+
+	err = setManualWhiteBalance(cam, defaultWhiteBalanceTemperature)
+	if err != nil {
+		return nil, fmt.Errorf("failed to set manual white balance: %w", err)
 	}
 
 	logAllControls(cam, devPort, "before_settling")
@@ -636,6 +644,42 @@ func getAvgPixelColor(frame []byte) (*passport.Pixel, error) {
 		A: 255}, nil
 }
 
+func setManualWhiteBalance(cam *webcam.Webcam, temp int32) error {
+	controlIDs := make(map[string]webcam.ControlID)
+	controls := cam.GetControls()
+	for id, ctrl := range controls {
+		controlIDs[strings.ToLower(ctrl.Name)] = id
+	}
+
+	const manualWBSetting = int32(0)
+	const autoWBSetting = int32(1)
+
+	if temp == 0 {
+		err := setControlWithAlternativeNames(cam, controlIDs, controls, []string{"White Balance Temperature, Auto", "White Balance, Automatic"}, autoWBSetting)
+		if err != nil {
+			return err
+		}
+		return nil
+	}
+
+	err := setControlWithAlternativeNames(cam, controlIDs, controls, []string{"White Balance Temperature, Auto", "White Balance, Automatic"}, manualWBSetting)
+	if err != nil {
+		return err
+	}
+
+	return setControl(cam, controlIDs, controls, "White Balance Temperature", temp)
+}
+
+func setControlWithAlternativeNames(cam *webcam.Webcam, controlIDs map[string]webcam.ControlID, controls map[webcam.ControlID]webcam.Control, names []string, value int32) error {
+	var err error
+	for _, name := range names {
+		err = setControl(cam, controlIDs, controls, name, value)
+		if err == nil {
+			return nil
+		}
+	}
+	return fmt.Errorf("failed to set control with any of the names %v: %w", names, err)
+}
 
 func logAllControls(cam *webcam.Webcam, devPort string, phase string) {
 	controls := cam.GetControls()
