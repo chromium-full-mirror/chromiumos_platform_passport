@@ -67,6 +67,28 @@ class Ucd500Server(server.UcdServer):
                 # Disable dp 2+. Ignore all rates if they were set.
                 caps.dp_128_132_bitrates = []
 
+            if request.dp_810_bitrates:
+                if video_pb2.DP_810_BITRATE_8_1 in request.dp_810_bitrates:
+                    caps.bit_rate = 8.1
+                elif video_pb2.DP_810_BITRATE_6_75 in request.dp_810_bitrates:
+                    caps.bit_rate = 6.75
+                elif video_pb2.DP_810_BITRATE_5_4 in request.dp_810_bitrates:
+                    caps.bit_rate = 5.4
+                elif video_pb2.DP_810_BITRATE_2_7 in request.dp_810_bitrates:
+                    caps.bit_rate = 2.7
+                elif video_pb2.DP_810_BITRATE_1_62 in request.dp_810_bitrates:
+                    caps.bit_rate = 1.62
+            elif request.video_spec not in [
+                video_pb2.VIDEO_SPECIFICATION_DP_2_0,
+                video_pb2.VIDEO_SPECIFICATION_DP_2_1,
+            ]:
+                if request.video_spec == getattr(video_pb2, 'VIDEO_SPECIFICATION_DP_1_2', -1):
+                    caps.bit_rate = 5.4
+                elif request.video_spec == getattr(video_pb2, 'VIDEO_SPECIFICATION_DP_1_1', -1):
+                    caps.bit_rate = 2.7
+                else:
+                    caps.bit_rate = 8.1
+
         if request.HasField("mst"):
             caps.mst = request.mst
 
@@ -124,7 +146,24 @@ class Ucd500Server(server.UcdServer):
             if 20.0 in caps.dp_128_132_bitrates:
                 link_info.dp_128_bitrates.append(video_pb2.DP_128_BITRATE_20_0)
         else:
-            link_info.video_spec = video_pb2.VIDEO_SPECIFICATION_DP_1_4
+            if getattr(caps, 'bit_rate', None) is not None:
+                if caps.bit_rate >= 8.1:
+                    link_info.video_spec = video_pb2.VIDEO_SPECIFICATION_DP_1_4
+                    link_info.dp_810_bitrates.append(video_pb2.DP_810_BITRATE_8_1)
+                elif caps.bit_rate >= 6.75:
+                    link_info.video_spec = video_pb2.VIDEO_SPECIFICATION_DP_1_4
+                    link_info.dp_810_bitrates.append(video_pb2.DP_810_BITRATE_6_75)
+                elif caps.bit_rate >= 5.4:
+                    link_info.video_spec = getattr(video_pb2, 'VIDEO_SPECIFICATION_DP_1_2', video_pb2.VIDEO_SPECIFICATION_DP_1_4)
+                    link_info.dp_810_bitrates.append(video_pb2.DP_810_BITRATE_5_4)
+                elif caps.bit_rate >= 2.7:
+                    link_info.video_spec = getattr(video_pb2, 'VIDEO_SPECIFICATION_DP_1_1', video_pb2.VIDEO_SPECIFICATION_DP_1_4)
+                    link_info.dp_810_bitrates.append(video_pb2.DP_810_BITRATE_2_7)
+                elif caps.bit_rate >= 1.62:
+                    link_info.video_spec = getattr(video_pb2, 'VIDEO_SPECIFICATION_DP_1_1', video_pb2.VIDEO_SPECIFICATION_DP_1_4)
+                    link_info.dp_810_bitrates.append(video_pb2.DP_810_BITRATE_1_62)
+            else:
+                link_info.video_spec = video_pb2.VIDEO_SPECIFICATION_DP_1_4
 
         link_info.dsc = caps.dsc
 
@@ -138,6 +177,8 @@ class Ucd500Server(server.UcdServer):
         if isinstance(self._role, UniTAP.dev.UCD500.USBCSourceUSBCSink):
             self._role.pdcrx.controls.attach(request.attach)
             self._role.dprx.link.set_assert_state(request.attach)
+        elif hasattr(self._port_rx, "link") and hasattr(self._port_rx.link, "set_assert_state"):
+            self._port_rx.link.set_assert_state(request.attach)
         else:
             raise RuntimeError(
                 f"Attach operation for role {self._role} is not implemented."
@@ -150,7 +191,13 @@ class Ucd500Server(server.UcdServer):
         """Sends an HPD (Hot Plug Detect) pulse to a video tester."""
         self._check_serial_active(request.id)
 
-        self._port_rx.link.hpd_pulse()
+        duration_ms = request.pulse_duration_ms if request.HasField("pulse_duration_ms") and request.pulse_duration_ms > 0 else 500
+        if duration_ms >= 100 and hasattr(self._port_rx, "link") and hasattr(self._port_rx.link, "set_assert_state"):
+            self._port_rx.link.set_assert_state(False)
+            time.sleep(duration_ms / 1000.0)
+            self._port_rx.link.set_assert_state(True)
+        else:
+            self._port_rx.link.hpd_pulse()
 
         return video_pb2.HpdPulseVideoTesterResponse()
 
