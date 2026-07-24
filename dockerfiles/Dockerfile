@@ -115,8 +115,7 @@ WORKDIR "/usr/local/bin/unigraf"
 RUN venv/bin/pip install --require-hashes -r acroname_requirements.txt
 
 # Collect licenses
-RUN venv/bin/pip install -U pip-licenses \
-    && mkdir -p /third_party/python \
+RUN mkdir -p /third_party/python \
     && venv/bin/pip-licenses \
       --format=plain-vertical -u \
       --with-license-file \
