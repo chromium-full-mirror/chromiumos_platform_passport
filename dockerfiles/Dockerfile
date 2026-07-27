@@ -69,7 +69,7 @@ COPY --from=apiconfig python/ chromiumos_apis
 COPY --from=passport python/ .
 
 ARG UTC274_SDK_VERSION=1.1.61.823
-ARG UCD500_SDK_VERSION=3.6.398.13810
+ARG UCD500_SDK_VERSION=3.10.68.14270
 
 # Install the unigraf control dependencies and the chromiumos APIs.
 RUN wget https://storage.googleapis.com/chromeos-localmirror/distfiles/UTCLibrary-${UTC274_SDK_VERSION}.tar.gz \
