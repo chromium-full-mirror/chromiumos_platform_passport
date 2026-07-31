@@ -393,8 +393,8 @@ pyusb==1.3.1 \
     # via
     #   -r unigraf_requirements.in
     #   utclibrary
-unitap @ file:///usr/local/bin/unigraf/UniTAP-3.10.68.14270.tar.gz \
-    --hash=sha256:e6f23638f9cd331cc95fb579213ccceecae3093aa8bd9279a67e5c8380773b13
+unitap @ file:///usr/local/bin/unigraf/UniTAP-3.6.398.13810.tar.gz \
+    --hash=sha256:e4d79fe57db881b75fd699f54b7f660f0d46374310271f1a36a9329d8161f26e
     # via -r unigraf/requirements.in
 prettytable==3.18.0 \
     --hash=sha256:b3346e0e6f79180833aebaac088ae926340586cf6d7d991b9eb125b65f72313a \
