@@ -15,6 +15,8 @@ import logging
 import re
 import tempfile
 import time
+import glob
+import os
 
 # pylint: disable=import-error
 from chromiumos.test.lab.api.passport import (
@@ -369,17 +371,85 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
         return video_pb2.GetRolesResponse(roles=ret)
 
     @log_functionality.logger
+    def _force_usb_reenumeration(self, serial_number):
+        """Issues a USBDEVFS_RESET ioctl directly to the device node block.
+
+        This does not require write privileges to /sys (which is often mounted read-only
+        in containers) - it only requires write access to the specific character device
+        (e.g., /dev/bus/usb/XXX/YYY) which Docker strictly permits via cgroups.
+        It drops all lingering handles, unbinds the driver, bounces the hardware,
+        and re-enumerates it in place without altering the devnum.
+        """
+        import fcntl
+        for sys_path in glob.glob('/sys/bus/usb/devices/*/serial'):
+            try:
+                with open(sys_path, 'r') as f:
+                    if f.read().strip() == serial_number:
+                        dev_dir = os.path.dirname(sys_path)
+                        with open(os.path.join(dev_dir, 'busnum'), 'r') as f_bus, \
+                             open(os.path.join(dev_dir, 'devnum'), 'r') as f_dev:
+                            busnum = int(f_bus.read().strip())
+                            devnum = int(f_dev.read().strip())
+
+                        dev_path = f"/dev/bus/usb/{busnum:03d}/{devnum:03d}"
+                        logging.info("Hardware resetting USB node %s for serial %s using ioctl", dev_path, serial_number)
+
+                        # Set up the magic USBDEVFS_RESET constant
+                        USBDEVFS_RESET = 21780
+                        fd = os.open(dev_path, os.O_WRONLY)
+                        try:
+                            fcntl.ioctl(fd, USBDEVFS_RESET, 0)
+                        finally:
+                            os.close(fd)
+
+                        # Wait for the physical USB hub reset to propagate and device to boot
+                        time.sleep(20)
+                        return True
+            except (FileNotFoundError, OSError, IOError) as e:
+                logging.debug("Transient error opening USB ioctl path for %s: %s", sys_path, e)
+
+        logging.warning("Failed to locate/reset USB device node for serial %s", serial_number)
+        return False
+
     def PowerCycle(self, request, context):
         """Power cycle the video tester."""
+        logging.info("PowerCycling UCD %s", request.id)
 
-        self._dev.reset()
-        # We need to sleep while the reset is taking place, the expected time
-        # for this operation is 20 seconds, we sleep 30 to have some leeway.
-        time.sleep(constants.UCD_HW_RESET_TIMEOUT_S)
-        self._dev.close()
+        try:
+            logging.info("Attempting SDK-level reset for UCD %s", request.id)
+            self._dev.reset()
+            # We need to sleep while the reset is taking place, the expected time
+            # for this operation is 20 seconds, we sleep 30 to have some leeway.
+            time.sleep(constants.UCD_HW_RESET_TIMEOUT_S)
+        except Exception:
+            logging.exception("Clean SDK reset failed; continuing to forced bounce")
 
-        # Reopen the device and set the same role
-        self._dev = self._tsilib.open(request.id)
+        try:
+            self._dev.close()
+        except Exception:
+            logging.exception("Failed graceful SDK close; tearing down anyway")
+
+        # Bruteforce hardware re-enumeration to clear any dead handles
+        self._force_usb_reenumeration(request.id)
+
+        # Reconnect with exponential backoff to allow udev and libusb to settle
+        max_retries = 5
+        base_delay_s = 2
+
+        for attempt in range(max_retries):
+            # Wait for kernel bind payload to surface on libusb
+            delay = base_delay_s * (2 ** attempt)
+            time.sleep(delay)
+            try:
+                self._dev = self._tsilib.open(request.id)
+                logging.info("Successfully reconnected to UCD %s on attempt %d", request.id, attempt + 1)
+                break
+            except Exception as e:
+                if attempt == max_retries - 1:
+                    logging.exception("Failed all retry attempts to resurrect UCD %s", request.id)
+                    raise RuntimeError(f"UCD {request.id} failed to return after USB bounce") from e
+                logging.warning("Reconnection attempt %d failed, retrying in %ds...", attempt + 1, base_delay_s * (2 ** (attempt + 1)))
+
         if self._last_requested_role:
             self._role_set_quirks(self._last_requested_role)
 
