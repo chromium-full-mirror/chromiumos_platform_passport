@@ -6,7 +6,7 @@ pyinstaller==6.12.0
 pyinstaller-hooks-contrib==2025.1
 pyusb==1.3.1
 wget==3.2
-/usr/local/bin/unigraf/UTCLibrary-1.1.61.823.tar.gz
+/usr/local/bin/unigraf/UTCLibrary-1.1.65.835.tar.gz
 /usr/local/bin/unigraf/UniTAP-3.6.398.13810.tar.gz
 opentelemetry-api
 opentelemetry-sdk

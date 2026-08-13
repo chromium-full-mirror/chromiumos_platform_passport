@@ -4,8 +4,18 @@
 
 """Constants used in the unigrafctl application."""
 
-UTC_274_LATEST_FW = "1.1.61"
+UTC_274_LATEST_FW = "1.1.65"
 UTC_274_FW = {
+    "1.1.65": {
+        "ms": {
+            "name": "utc274_firmware.ms274.1.0.33.3",
+            "checksum": "9cad7336d046d75d988dace8b920623a3dc440975cc7488751731d23ad412bcc",
+        },
+        "pd": {
+            "name": "utc274_firmware.pd274.1.0.47",
+            "checksum": "cbad179e876ccdb33eb173923f195a08a00da723e4a7dc3af43dea40b58c0860",
+        },
+    },
     "1.1.61": {
         "ms": {
             "name": "utc274_firmware.ms274.1.0.33.3",
