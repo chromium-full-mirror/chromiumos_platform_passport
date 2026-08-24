@@ -265,57 +265,116 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
         return video_pb2.LoadEdidVideoTesterResponse(success=len(ret) != 0)
 
     # Do not log the request as the screenshots can get very big.
-    def ScreenshotVideoTester(self, request, _):
+    def ScreenshotVideoTester(self, request, context):
         """Captures a screenshot from a specific stream of a video tester."""
 
-        logging.info("Running ScreenshotVideoTester with args: %s", request)
+        logging.info(
+            "Running ScreenshotVideoTester for stream %d on device %s",
+            request.id_stream,
+            request.id,
+        )
         self._check_serial_active(request.id)
 
-        # Check current status and handle firmware bug where device gets stuck
-        current_status = self._port_rx.video_capturer.status
-        if current_status != UniTAP.VideoCaptureStatus.Idle:
-            logging.warning(
-                "Video capturer is not idle (status: %s), attempting to reset",
-                current_status,
-            )
+        # Validate stream index against active hardware streams if supported
+        try:
+            active_streams = self._get_number_of_video_streams()
+            if request.id_stream >= active_streams:
+                msg = (
+                    f"Requested stream {request.id_stream} exceeds available "
+                    f"streams ({active_streams})"
+                )
+                logging.error(msg)
+                context.set_code(grpc.StatusCode.INVALID_ARGUMENT)
+                context.set_details(msg)
+                raise ValueError(msg)
+        except (NotImplementedError, RuntimeError):
+            pass
 
-            # Force stop to clear any stuck state (firmware bug workaround)
+        max_attempts = 3
+        frame_latch_delay_sec = 0.5
+        last_error = None
+
+        for attempt in range(1, max_attempts + 1):
             try:
-                self._port_rx.video_capturer.stop()
-                logging.info("Forced stop completed")
-                time.sleep(0.2)
+                # Reset any stuck capturer state from previous runs
+                current_status = self._port_rx.video_capturer.status
+                if current_status != UniTAP.VideoCaptureStatus.Idle:
+                    logging.warning(
+                        "Video capturer is not idle (status: %s), attempting to reset",
+                        current_status,
+                    )
+                    try:
+                        self._port_rx.video_capturer.stop()
+                        time.sleep(0.2)
+                    except Exception as e:
+                        logging.debug("Non-fatal error resetting capturer: %s", e)
 
-                # Check status after forced stop
-                new_status = self._port_rx.video_capturer.status
-                logging.info("Status after forced stop: %s", new_status)
+                logging.info(
+                    "Start live video capture (attempt %d/%d)",
+                    attempt,
+                    max_attempts,
+                )
+
+                # Asynchronous live capture with hardware latch window
+                try:
+                    self._port_rx.video_capturer.start(
+                        frames_count=0,
+                        stream_number=request.id_stream,
+                    )
+                    time.sleep(frame_latch_delay_sec)
+                    self._port_rx.video_capturer.pop_element()
+                finally:
+                    # Guarantee hardware capturer is stopped in all paths
+                    try:
+                        self._port_rx.video_capturer.stop()
+                    except Exception:
+                        pass
+
+                result = self._port_rx.video_capturer.capture_result
+                if not result.buffer:
+                    raise RuntimeError(
+                        "Capturer completed but returned an empty frame buffer"
+                    )
+
+                with tempfile.NamedTemporaryFile(suffix=".bmp") as tmp:
+                    logging.info("Saving image to disk")
+                    result.save_image_to_file(
+                        file_format=UniTAP.PictureFileFormat.BMP,
+                        path=tmp.name,
+                        index=0,
+                    )
+                    with open(tmp.name, "rb") as f:
+                        screenshot_bytes = f.read()
+
+                if not screenshot_bytes:
+                    raise RuntimeError("Screenshot file was written with 0 bytes")
+
+                logging.info(
+                    "Screenshot capture successful (%d bytes)",
+                    len(screenshot_bytes),
+                )
+                return video_pb2.ScreenshotVideoTesterResponse(
+                    screenshot=screenshot_bytes
+                )
 
             except Exception as e:
-                logging.warning("Forced stop failed: %s, proceeding anyway", e)
-                raise RuntimeError(f"Forced stop failed: {e}")
+                logging.warning(
+                    "Screenshot capture attempt %d/%d failed: %s",
+                    attempt,
+                    max_attempts,
+                    e,
+                )
+                last_error = e
+                if attempt < max_attempts:
+                    time.sleep(0.5)
 
-        logging.info("Start video capture")
-        self._port_rx.video_capturer.start(
-            frames_count=1,
-            stream_number=request.id_stream,
+        context.set_code(grpc.StatusCode.UNAVAILABLE)
+        context.set_details(
+            f"Screenshot capture failed after {max_attempts} attempts: {last_error}"
         )
-        logging.info("Stop video capture")
-        self._port_rx.video_capturer.stop()
-        result = self._port_rx.video_capturer.capture_result
-
-        # pylint: disable=R1732
-        tmp = tempfile.NamedTemporaryFile(suffix=".bmp")
-        # pylint: enable=R1732
-
-        logging.info("Saving image to disk")
-        result.save_image_to_file(
-            file_format=UniTAP.PictureFileFormat.BMP,
-            path=tmp.name,
-            index=0,
+        raise RuntimeError(
+            f"Screenshot capture failed after {max_attempts} attempts: {last_error}"
         )
-
-        with open(tmp.name, "rb") as f:
-            logging.info("Sending screenshot")
-            return video_pb2.ScreenshotVideoTesterResponse(screenshot=f.read())
 
     @log_functionality.logger
     def GetStreamInfoVideoTester(self, request, _):
