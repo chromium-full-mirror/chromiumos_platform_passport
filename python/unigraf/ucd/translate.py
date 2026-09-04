@@ -8,7 +8,7 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-# pylint: disable=import-error
+# pylint: disable=import-error,line-too-long
 from chromiumos.test.lab.api.passport import (
     video_tester_service_pb2 as video_pb2,
 )
@@ -71,6 +71,31 @@ INTEL_COMMON_PARAMS_DP_1_4_CTS_DUT_SRC = {
     }
 }
 
+BLUEY_COMMON_PARAMS_CTS_DUT_SRC = {
+    "default": {
+        # Platform specs
+        "general.dut_caps.max_lanes": 4,
+        "general.dut_caps.max_link_rate": 8.1,
+        "general.dut_caps.dut_caps_flags.fec_supported": True,
+        "general.dut_caps.dut_caps_flags.dsc_supported": True,
+        "general.hpd_pulse_duration": 1000,
+        # Bluey outputs DisplayPort over USB Type-C Alt Mode.
+        "general.dut_caps.dut_caps_flags.dut_is_type_c_device": True,
+        # Qualcomm DPU hardware supports 1D Flat prediction but not DSC 1.2 Block Prediction.
+        "general.dut_caps.dut_caps_flags.dsc_block_prediction_supported": False,
+        # Android has no userspace VESA Test Automation Daemon polling DPCD 0x218.
+        "general.test_automation.test_edid_read": False,
+    },
+}
+
+BLUEY_COMMON_PARAMS_DP_1_4_CTS_DUT_SRC = {
+    "default": {
+        **BLUEY_COMMON_PARAMS_CTS_DUT_SRC["default"],
+        # Progress link layer tests without waiting for active video rasterization.
+        "general.test_automation.event_indication": dp_1_4_source_general_tab.EventIndication.AlwaysReady,
+    }
+}
+
 # For each test groups we have:
 # - default param class
 # - for each board that needs to support special params
@@ -110,28 +135,34 @@ TEST_GROUPS = {
         "default_param_class": UniTAP.Dp14SourceDUTTestParam,
         "brya": INTEL_COMMON_PARAMS_DP_1_4_CTS_DUT_SRC,
         "fatcat": INTEL_COMMON_PARAMS_DP_1_4_CTS_DUT_SRC,
+        "bluey": BLUEY_COMMON_PARAMS_DP_1_4_CTS_DUT_SRC,
     },
     video_pb2.GROUP_DISPLAYPORT_1_4_DSC_LINK_LAYER_CTS: {
         "group_id": UniTAP.TestGroupId.DP_RX_LL_CTS_DSC,
         "default_param_class": UniTAP.Dp14SourceDUTTestParam,
+        "bluey": BLUEY_COMMON_PARAMS_DP_1_4_CTS_DUT_SRC,
     },
     video_pb2.GROUP_DISPLAYPORT_1_4_DISPLAYID_CTS_SOURCE_TEST: {
         "group_id": UniTAP.TestGroupId.DP_RX_DISPLAYID,
         "default_param_class": UniTAP.Dp14SourceDUTTestParam,
+        "bluey": BLUEY_COMMON_PARAMS_DP_1_4_CTS_DUT_SRC,
     },
     video_pb2.GROUP_DISPLAYPORT_2_1_LINK_LAYER_SOURCE_DUT_CTS: {
         "group_id": UniTAP.TestGroupId.DP_2_1_RX_LL_CTS,
         "default_param_class": UniTAP.Dp21SourceDUTTestParam,
         "brya": INTEL_COMMON_PARAMS_CTS_DUT_SRC,
         "fatcat": INTEL_COMMON_PARAMS_CTS_DUT_SRC,
+        "bluey": BLUEY_COMMON_PARAMS_CTS_DUT_SRC,
     },
     video_pb2.GROUP_DISPLAYPORT_2_1_DSC_CTS_SOURCE_DUT: {
         "group_id": UniTAP.TestGroupId.DP_2_1_RX_DSC_CTS,
         "default_param_class": UniTAP.Dp21SourceDUTTestParam,
+        "bluey": BLUEY_COMMON_PARAMS_CTS_DUT_SRC,
     },
     video_pb2.GROUP_DISPLAYPORT_2_1_DISPLAYID_CTS_SOURCE_TEST: {
         "group_id": UniTAP.TestGroupId.DP_2_1_RX_DISPAYID,
         "default_param_class": UniTAP.Dp21SourceDUTTestParam,
+        "bluey": BLUEY_COMMON_PARAMS_CTS_DUT_SRC,
     },
 }
 
