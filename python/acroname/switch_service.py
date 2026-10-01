@@ -31,35 +31,44 @@ class SwitchService(switch_pb2_grpc.SwitchServiceServicer):
         atexit.register(self.__del__)
         logging.info("Init Brainstem Switch Server")
 
-    @log_functionality.logger
-    def GetSwitches(self, request, context):  # pylint: disable=W0613
-        """Probes all known switches connected to the system."""
-        res = switch_pb2.GetSwitchesResponse()
+    def _refresh_switches(self) -> list[str]:
+        """Discovers USB Brainstem switches and registers controllers."""
+        serials = []
         for spec in brainstem.discover.findAllModules(brainstem.link.Spec.USB):
             serial = str(spec.serial_number)
             logging.info("found switch: %s", serial)
-            res.switches.append(switch_pb2.SwitchFixture(id=serial))
+            serials.append(serial)
 
             if serial not in self._switches:
                 self._switches[serial] = switch_base.create_switch_controller(
                     spec
                 )
 
+        return serials
+
+    @log_functionality.logger
+    def GetSwitches(self, request, context):  # pylint: disable=W0613
+        """Probes all known switches connected to the system."""
+        res = switch_pb2.GetSwitchesResponse()
+        for serial in self._refresh_switches():
+            res.switches.append(switch_pb2.SwitchFixture(id=serial))
+
         return res
 
     @log_functionality.logger
     def ResetAllSwitches(self, request, context):  # pylint: disable=W0613
         """Re-initializes all switches and sets them to "disabled" state."""
-        for switch in self.GetSwitches(None, context).switches:
-            logging.info("resetting switch: %s", switch.id)
-            self._switches[switch.id].reset()
+        for serial in self._refresh_switches():
+            logging.info("resetting switch: %s", serial)
+            self._switches[serial].reset()
 
         return switch_pb2.ResetAllSwitchesResponse()
 
     @log_functionality.logger
     def ConfigureSwitchPort(self, request, context):  # pylint: disable=W0613
         """Configures a single port on a switch."""
-        self.GetSwitches(None, context)
+        if request.switch_id not in self._switches:
+            self._refresh_switches()
         if request.switch_id not in self._switches:
             raise ValueError(f"unknown switch id: {request.switch_id}")
 

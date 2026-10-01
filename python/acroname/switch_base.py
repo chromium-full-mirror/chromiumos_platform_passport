@@ -5,8 +5,10 @@
 """Provides a gRPC server to control ACRONAME switches."""
 
 import abc
+import contextlib
 import enum
 import logging
+import threading
 import typing
 
 # pylint: disable=import-error
@@ -40,10 +42,28 @@ def _check_result(action: typing.Callable[[], []], description: str):
 class SwitchBase(abc.ABC):
     """Base class for switch controllers."""
 
-    def __init__(self, spec):
-        _check_result(
-            lambda: self.stem.connect(spec.serial_number), "connect to switch"
-        )
+    def __init__(self, spec: brainstem.link.Spec):
+        self._spec = spec
+        self._stem = None
+        self._lock = threading.RLock()
+        self._connected = False
+
+    @contextlib.contextmanager
+    def _session(self):
+        """Opens a Brainstem USB connection for a single operation."""
+        with self._lock:
+            connected_here = not self._connected
+            if connected_here:
+                _check_result(
+                    lambda: self.stem.connect(self._spec.serial_number),
+                    "connect to switch",
+                )
+                self._connected = True
+            try:
+                yield
+            finally:
+                if connected_here:
+                    self.close()
 
     @property
     @abc.abstractmethod
@@ -121,8 +141,9 @@ class SwitchBase(abc.ABC):
     @log_functionality.logger
     def reset(self):
         """Resets all of the switch ports."""
-        for port in range(self.port_count):
-            self.configure(port, switch_pb2.SWITCH_PORT_DISABLED)
+        with self._session():
+            for port in range(self.port_count):
+                self.configure(port, switch_pb2.SWITCH_PORT_DISABLED)
 
     @log_functionality.logger
     def configure(self, port: int, state: switch_pb2.SwitchPortState):
@@ -132,27 +153,30 @@ class SwitchBase(abc.ABC):
             port: the port to configure.
             state: the state to set the port to.
         """
-        if state == switch_pb2.SwitchPortState.SWITCH_PORT_DISABLED:
-            self.disable_port(port)
-        elif state == switch_pb2.SwitchPortState.SWITCH_PORT_ENABLED:
-            self.enable_port(port)
-        elif state == switch_pb2.SwitchPortState.SWITCH_PORT_FLIP:
-            self.flip_port(port)
-        else:
-            raise ValueError(f"unknown switch state: {state}")
+        with self._session():
+            if state == switch_pb2.SwitchPortState.SWITCH_PORT_DISABLED:
+                self.disable_port(port)
+            elif state == switch_pb2.SwitchPortState.SWITCH_PORT_ENABLED:
+                self.enable_port(port)
+            elif state == switch_pb2.SwitchPortState.SWITCH_PORT_FLIP:
+                self.flip_port(port)
+            else:
+                raise ValueError(f"unknown switch state: {state}")
 
     @log_functionality.logger
     def close(self):
+        if not self._connected:
+            return
         try:
             self.stem.disconnect()
         except Exception as e:
             logging.error("failed to disconnect module: %s", e)
+        finally:
+            self._connected = False
 
 
 class USBHub2x4(SwitchBase):
     """Controller for USBHub2x4 Brainstem module."""
-
-    _stem = None
 
     @property
     def supports_flip(self) -> bool:
@@ -187,8 +211,6 @@ class USBHub2x4(SwitchBase):
 class USBHub3p(SwitchBase):
     """Controller for USBHub3b Brainstem module."""
 
-    _stem = None
-
     @property
     def supports_flip(self) -> bool:
         """Gets if the module supports USB prot flipping.
@@ -221,8 +243,6 @@ class USBHub3p(SwitchBase):
 
 class USBHub3c(SwitchBase):
     """Controller for USBHub3c Brainstem module."""
-
-    _stem = None
 
     @property
     def supports_flip(self) -> bool:
@@ -280,8 +300,6 @@ class USBHub3c(SwitchBase):
 
 class USBCSwitch(SwitchBase):
     """Controller for USBCSwitch Brainstem module."""
-
-    _stem = None
 
     @property
     def supports_flip(self) -> bool:
