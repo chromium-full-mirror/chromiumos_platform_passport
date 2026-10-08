@@ -137,6 +137,28 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
 
         return video_pb2.GetVideoTestersResponse(testers=ret)
 
+    def _ensure_video_capturer_idle(self):
+        """Ensures the video capturer is Idle, stopping it if needed."""
+        if self._port_rx is None:
+            return
+        current_status = self._port_rx.video_capturer.status
+        if current_status != UniTAP.VideoCaptureStatus.Idle:
+            logging.warning(
+                "Video capturer is not idle (status: %s), attempting to reset",
+                current_status,
+            )
+            try:
+                self._port_rx.video_capturer.stop()
+                time.sleep(0.2)
+            except Exception as e:
+                logging.debug("Non-fatal error resetting capturer: %s", e)
+
+            current_status = self._port_rx.video_capturer.status
+            if current_status != UniTAP.VideoCaptureStatus.Idle:
+                raise RuntimeError(
+                    f"Video capturer is not idle (status: {current_status})"
+                )
+
     @log_functionality.logger
     def SetRoleVideoTester(self, request, _):
         """Selects a specific role for a given video tester."""
@@ -151,6 +173,14 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
 
         self._last_requested_role = translate.UCD_ROLES[request.role]
         self._role_set_quirks(self._last_requested_role)
+        self._ensure_video_capturer_idle()
+        fw_info = (
+            self._dev._TSIDevice__io.get_prepared_fw_info()  # pylint: disable=protected-access
+        )
+        if re.search(r":\s*0\.0\.0(?:\.0)?\b", fw_info):
+            raise RuntimeError(
+                f"Corrupted UCD firmware version detected: {fw_info}"
+            )
 
         return video_pb2.SetRoleResponse(success=True)
 
@@ -179,6 +209,14 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
 
         if self._dev is None:
             raise RuntimeError(f"Serial {request.id} was never open")
+
+        for port in (self._port_rx, self._port_tx):
+            if port is not None:
+                for attr in ("video_capturer", "event_capturer"):
+                    try:
+                        getattr(port, attr).stop()
+                    except Exception:
+                        pass
 
         self._tsilib.close(self._dev)
 
@@ -297,17 +335,7 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
         for attempt in range(1, max_attempts + 1):
             try:
                 # Reset any stuck capturer state from previous runs
-                current_status = self._port_rx.video_capturer.status
-                if current_status != UniTAP.VideoCaptureStatus.Idle:
-                    logging.warning(
-                        "Video capturer is not idle (status: %s), attempting to reset",
-                        current_status,
-                    )
-                    try:
-                        self._port_rx.video_capturer.stop()
-                        time.sleep(0.2)
-                    except Exception as e:
-                        logging.debug("Non-fatal error resetting capturer: %s", e)
+                self._ensure_video_capturer_idle()
 
                 logging.info(
                     "Start live video capture (attempt %d/%d)",
@@ -329,6 +357,7 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
                         self._port_rx.video_capturer.stop()
                     except Exception:
                         pass
+                    self._ensure_video_capturer_idle()
 
                 result = self._port_rx.video_capturer.capture_result
                 if not result.buffer:
@@ -476,7 +505,7 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
 
         try:
             logging.info("Attempting SDK-level reset for UCD %s", request.id)
-            self._dev.reset()
+            self._dev._TSIDevice__io.reset()  # pylint: disable=protected-access
             # We need to sleep while the reset is taking place, the expected time
             # for this operation is 20 seconds, we sleep 30 to have some leeway.
             time.sleep(constants.UCD_HW_RESET_TIMEOUT_S)

@@ -274,6 +274,15 @@ class Ucd500Server(server.UcdServer):
         if not request.generate_reports:
             return video_pb2.StopEventCaptureResponse()
 
+        # pylint: disable=protected-access
+        fw_parts = self._dev._TSIDevice__io.get_prepared_fw_info().split("|")
+        if len(fw_parts) >= 3:
+            for port in (self._port_tx, self._port_rx):
+                port.event_capturer._EventCapturer__fw_info[
+                    "ucd_fw_version"
+                ] = fw_parts[2]
+        # pylint: enable=protected-access
+
         # pylint: disable=R1732
         tmp_tx = tempfile.NamedTemporaryFile(suffix=".html")
         tmp_rx = tempfile.NamedTemporaryFile(suffix=".html")
