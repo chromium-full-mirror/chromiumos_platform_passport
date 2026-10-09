@@ -266,6 +266,63 @@ class TestUcd500Server(unittest.TestCase):
 
         self.assertIn("Video capturer is not idle", str(ctx.exception))
 
+    def test_set_role_allows_inactive_pdtx_zero_on_dp_source_role(self) -> None:
+        """Verifies PDTX: 0.0.0 is allowed on DP-source roles without pdctx."""
+        self.server.OpenVideoTester(
+            video_pb2.OpenVideoTesterRequest(id=FAKE_SERIAL), self.context
+        )
+        dp_source_role = mock.MagicMock(
+            spec=UniTAP.dev.UCD500.DPSourceUSBCSink
+        )
+        dp_source_role.dprx = self.mock_port_rx
+        dp_source_role.dptx = self.mock_port_tx
+        dp_source_role.pdcrx = mock.MagicMock()
+        self.mock_dev.select_role.return_value = dp_source_role
+        self.mock_io.get_prepared_fw_info.return_value = (
+            "UCD-500|2236C961|UX: 2.6.1, UF: 1.3.4, PDRX: 1.4.20, PDTX: 0.0.0|"
+            "1.0|2048"
+        )
+
+        with mock.patch("ucd.ucd500.UniTAP.OpfHandlerInternal"):
+            reply = self.server.SetRoleVideoTester(
+                video_pb2.SetRoleRequest(
+                    id=FAKE_SERIAL,
+                    role=video_pb2.ROLE_DPSOURCE_USBCSINK,
+                ),
+                self.context,
+            )
+        self.assertTrue(reply.success)
+
+    def test_set_role_reopens_once_on_initial_ux_zero_stall(self) -> None:
+        """Verifies _role_set_quirks reopens and retries on UX: 0.0.0 stall."""
+        self.server.OpenVideoTester(
+            video_pb2.OpenVideoTesterRequest(id=FAKE_SERIAL), self.context
+        )
+        stalled_fw = (
+            "UCD-500|2236C961|UX: 0.0.0, UF: 0.0.0, PDRX: 0.0.0, PDTX: 0.0.0|"
+            "1.0|2048"
+        )
+        self.mock_io.get_prepared_fw_info.side_effect = [
+            stalled_fw,
+            HEALTHY_FW_INFO,
+        ]
+
+        with (
+            mock.patch("ucd.ucd500.UniTAP.OpfHandlerInternal"),
+            mock.patch("ucd.ucd500.time.sleep"),
+        ):
+            reply = self.server.SetRoleVideoTester(
+                video_pb2.SetRoleRequest(
+                    id=FAKE_SERIAL,
+                    role=video_pb2.ROLE_USBCSOURCE_USBCSINK,
+                ),
+                self.context,
+            )
+
+        self.assertTrue(reply.success)
+        self.assertEqual(self.mock_dev.select_role.call_count, 2)
+        self.mock_tsilib.close.assert_called_once_with(self.mock_dev)
+
     def test_close_video_tester_stops_capturers(self) -> None:
         """Verifies CloseVideoTester stops active capturers before closing."""
         self._open_and_set_role()
@@ -278,6 +335,10 @@ class TestUcd500Server(unittest.TestCase):
         self.mock_port_tx.video_capturer.stop.assert_called_once()
         self.mock_port_tx.event_capturer.stop.assert_called_once()
         self.mock_tsilib.close.assert_called_once_with(self.mock_dev)
+        self.assertIsNone(self.server._port_rx)
+        self.assertIsNone(self.server._port_tx)
+        self.assertIsNone(self.server._role)
+        self.assertIsNone(self.server._dev)
 
     @mock.patch("ucd.server.time.sleep")
     def test_power_cycle_invokes_direct_io_reset(

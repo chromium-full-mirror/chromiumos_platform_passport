@@ -304,6 +304,18 @@ class Ucd500Server(server.UcdServer):
 
     def _role_set_quirks(self, role_to_set):
         self._role = self._dev.select_role(role_to_set)
+        fw_info = (
+            self._dev._TSIDevice__io.get_prepared_fw_info()  # pylint: disable=protected-access
+        )
+        if not fw_info or "UX: 0.0.0" in fw_info:
+            logging.warning(
+                "UCD firmware read failed after role selection; reopening to"
+                " clear USB endpoint state."
+            )
+            self._role = None
+            self._tsilib.close(self._dev)
+            self._dev = self._tsilib.open(self._serial)
+            self._role = self._dev.select_role(role_to_set)
         self._port_rx = self._role.dprx
         self._port_tx = self._role.dptx
         self._dev.opf_handler = UniTAP.OpfHandlerInternal(

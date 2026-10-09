@@ -177,7 +177,13 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
         fw_info = (
             self._dev._TSIDevice__io.get_prepared_fw_info()  # pylint: disable=protected-access
         )
-        if re.search(r":\s*0\.0\.0(?:\.0)?\b", fw_info):
+        fw_components = ["UX", "UF"]
+        if hasattr(self._role, "pdcrx"):
+            fw_components.append("PDRX")
+        if hasattr(self._role, "pdctx"):
+            fw_components.append("PDTX")
+        pattern = rf"\b(?:{'|'.join(fw_components)}):\s*0\.0\.0(?:\.0)?\b"
+        if not fw_info or re.search(pattern, fw_info):
             raise RuntimeError(
                 f"Corrupted UCD firmware version detected: {fw_info}"
             )
@@ -218,7 +224,11 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
                     except Exception:
                         pass
 
+        self._port_rx = None
+        self._port_tx = None
+        self._role = None
         self._tsilib.close(self._dev)
+        self._dev = None
 
         return video_pb2.CloseVideoTesterResponse(success=True)
 
