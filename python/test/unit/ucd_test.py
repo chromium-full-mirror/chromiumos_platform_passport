@@ -63,6 +63,11 @@ except ModuleNotFoundError:
         LiveModeActive = 1
         Malfunction = 2
 
+    class _EventCaptureStatus(enum.Enum):
+        Idle = 0
+        Running = 1
+        Malfunction = 2
+
     class _NotExistingRoleSelected(Exception):
         pass
 
@@ -85,6 +90,7 @@ except ModuleNotFoundError:
         pass
 
     unitap_stub.VideoCaptureStatus = _VideoCaptureStatus
+    unitap_stub.EventCaptureStatus = _EventCaptureStatus
     unitap_stub.dev.UCD422.HDMISourceHDMISink = _HDMISourceHDMISink
     unitap_stub.dev.UCD500.USBCSourceUSBCSink = _USBCSourceUSBCSink
     unitap_stub.dev.UCD500.DPSourceUSBCSink = _DPSourceUSBCSink
@@ -152,6 +158,8 @@ class TestUcd500Server(unittest.TestCase):
         self.mock_port_rx = mock.MagicMock()
         self.mock_port_tx = mock.MagicMock()
         self.mock_port_rx.video_capturer.status = UniTAP.VideoCaptureStatus.Idle
+        self.mock_port_rx.event_capturer.status = UniTAP.EventCaptureStatus.Idle
+        self.mock_port_tx.event_capturer.status = UniTAP.EventCaptureStatus.Idle
         self.mock_role.dprx = self.mock_port_rx
         self.mock_role.dptx = self.mock_port_tx
         self.mock_role.pdcrx = mock.MagicMock()
@@ -322,9 +330,7 @@ class TestUcd500Server(unittest.TestCase):
         self.server.OpenVideoTester(
             video_pb2.OpenVideoTesterRequest(id=FAKE_SERIAL), self.context
         )
-        dp_source_role = mock.MagicMock(
-            spec=UniTAP.dev.UCD500.DPSourceUSBCSink
-        )
+        dp_source_role = mock.MagicMock(spec=UniTAP.dev.UCD500.DPSourceUSBCSink)
         dp_source_role.dprx = self.mock_port_rx
         dp_source_role.dptx = self.mock_port_tx
         dp_source_role.pdcrx = mock.MagicMock()
@@ -541,6 +547,298 @@ class TestUcd500Server(unittest.TestCase):
 
         self.assertIn("PDRX: 0.0.0, PDTX: 0.0.0", tx_fw_info["ucd_fw_version"])
         self.assertIn("PDRX: 0.0.0, PDTX: 0.0.0", rx_fw_info["ucd_fw_version"])
+
+    @mock.patch("ucd.server.time.sleep")
+    def test_ensure_video_capturer_idle_recovers_via_pipeline_reset(
+        self, mock_sleep: mock.MagicMock
+    ) -> None:
+        """Verifies _ensure_video_capturer_idle resets wedged pipeline."""
+        del mock_sleep
+        self._open_and_set_role()
+        self.mock_port_rx.video_capturer.status = (
+            UniTAP.VideoCaptureStatus.LiveModeActive
+        )
+        self.mock_port_rx.event_capturer.status = (
+            UniTAP.EventCaptureStatus.Running
+        )
+        self.mock_port_rx.event_capturer._EventCapturer__result.buffer = [
+            "evt1",
+            "evt2",
+        ]
+
+        def stop_event_capturer() -> None:
+            self.mock_port_rx.event_capturer.status = (
+                UniTAP.EventCaptureStatus.Idle
+            )
+            self.mock_port_rx.event_capturer._EventCapturer__result.buffer = []
+
+        def start_event_capturer() -> None:
+            self.mock_port_rx.event_capturer.status = (
+                UniTAP.EventCaptureStatus.Running
+            )
+
+        def write_port_reg(reg: int, val: int) -> None:
+            if (
+                reg == 0x301
+                and val == 2
+                and self.mock_port_rx.event_capturer.status
+                == UniTAP.EventCaptureStatus.Idle
+            ):
+                self.mock_port_rx.video_capturer.status = (
+                    UniTAP.VideoCaptureStatus.Idle
+                )
+
+        self.mock_port_rx.event_capturer.stop.side_effect = stop_event_capturer
+        self.mock_port_rx.event_capturer.start.side_effect = (
+            start_event_capturer
+        )
+        self.mock_port_rx._Port__io.set.side_effect = write_port_reg
+
+        self.server._ensure_video_capturer_idle()
+
+        self.assertEqual(
+            self.mock_port_rx.video_capturer.status,
+            UniTAP.VideoCaptureStatus.Idle,
+        )
+        self.mock_port_rx._Port__io.set.assert_has_calls(
+            [
+                mock.call(0x302, 0),
+                mock.call(0x301, 2),
+                mock.call(0x5002C004, 1),
+            ]
+        )
+        capturer = self.mock_dev._TSIDevice__capturer
+        capturer.clear_bulk_buffer.assert_called_once()
+        self.mock_dev._TSIDevice__memory_manager.reset.assert_called_once()
+        self.mock_port_rx.event_capturer.start.assert_called_once()
+        self.assertEqual(
+            self.mock_port_rx.event_capturer._EventCapturer__result.buffer,
+            ["evt1", "evt2"],
+        )
+
+    @mock.patch("ucd.server.time.sleep")
+    def test_ensure_video_capturer_idle_recovers_malfunction_via_pulse(
+        self, mock_sleep: mock.MagicMock
+    ) -> None:
+        """Verifies Malfunction status clears via 0-frame start/stop pulse."""
+        del mock_sleep
+        self._open_and_set_role()
+        self.mock_port_rx.video_capturer.status = (
+            UniTAP.VideoCaptureStatus.Malfunction
+        )
+        pulsed = {"zero_frame_started": False}
+
+        def start_capturer(
+            frames_count: int = 0, stream_number: int = 0
+        ) -> None:
+            if frames_count == 0 and stream_number == 0:
+                pulsed["zero_frame_started"] = True
+
+        def stop_capturer() -> None:
+            if pulsed["zero_frame_started"]:
+                self.mock_port_rx.video_capturer.status = (
+                    UniTAP.VideoCaptureStatus.Idle
+                )
+
+        self.mock_port_rx.video_capturer.start.side_effect = start_capturer
+        self.mock_port_rx.video_capturer.stop.side_effect = stop_capturer
+
+        self.server._ensure_video_capturer_idle()
+
+        self.assertEqual(
+            self.mock_port_rx.video_capturer.status,
+            UniTAP.VideoCaptureStatus.Idle,
+        )
+        self.mock_port_rx.video_capturer.start.assert_called_once_with(
+            frames_count=0, stream_number=0
+        )
+
+    @mock.patch("ucd.server.time.sleep")
+    def test_screenshot_recovers_on_retry_after_min_buffer_size_error(
+        self, mock_sleep: mock.MagicMock
+    ) -> None:
+        """Verifies ScreenshotVideoTester resets pipeline and retries."""
+        del mock_sleep
+        self._open_and_set_role()
+        dp_status = self.mock_role.pdcrx.dp_alt_mode.status.dut_dp_alt_mode
+        dp_status.dut_connection = "Connected"
+        link_caps = self.mock_port_rx.link.capabilities.link_caps_status
+        link_caps.return_value.mst = False
+        self.mock_port_rx.video_capturer.pop_element.side_effect = [
+            ValueError("Minimum buffer size must be more than 0"),
+            None,
+        ]
+        self.mock_port_rx.video_capturer.capture_result.buffer = [object()]
+
+        def write_bmp(file_format, path, index) -> None:
+            del file_format, index
+            with open(path, "wb") as f:
+                f.write(b"BM_RECOVERED_IMAGE")
+
+        capture_result = self.mock_port_rx.video_capturer.capture_result
+        capture_result.save_image_to_file.side_effect = write_bmp
+
+        reply = self.server.ScreenshotVideoTester(
+            video_pb2.ScreenshotVideoTesterRequest(id=FAKE_SERIAL, id_stream=0),
+            self.context,
+        )
+
+        self.assertEqual(reply.screenshot, b"BM_RECOVERED_IMAGE")
+        capturer = self.mock_dev._TSIDevice__capturer
+        capturer.clear_bulk_buffer.assert_called_once()
+        self.mock_dev._TSIDevice__memory_manager.reset.assert_called_once()
+        self.context.set_code.assert_not_called()
+
+    def test_set_role_recovers_pdrx_zero_in_place_via_pdc_reset(self) -> None:
+        """Verifies PDRX: 0.0.0 is recovered in-place via pdcrx reset."""
+        self.server.OpenVideoTester(
+            video_pb2.OpenVideoTesterRequest(id=FAKE_SERIAL), self.context
+        )
+        self.mock_io.get_prepared_fw_info.side_effect = [
+            WEDGED_PD_FW_INFO,
+            HEALTHY_FW_INFO,
+            HEALTHY_FW_INFO,
+        ]
+
+        with (
+            mock.patch("ucd.ucd500.UniTAP.OpfHandlerInternal"),
+            mock.patch("ucd.ucd500.time.sleep"),
+        ):
+            reply = self.server.SetRoleVideoTester(
+                video_pb2.SetRoleRequest(
+                    id=FAKE_SERIAL,
+                    role=video_pb2.ROLE_USBCSOURCE_USBCSINK,
+                ),
+                self.context,
+            )
+
+        self.assertTrue(reply.success)
+        self.mock_role.pdcrx.controls.reset.assert_called_once()
+        self.mock_dev.select_role.assert_called_once()
+        self.mock_tsilib.close.assert_not_called()
+
+    def test_set_role_recovers_pdrx_zero_via_reopen_when_pdc_reset_insufficient(
+        self,
+    ) -> None:
+        """Verifies _select_role reopens handle if in-place PDC reset fails."""
+        self.server.OpenVideoTester(
+            video_pb2.OpenVideoTesterRequest(id=FAKE_SERIAL), self.context
+        )
+        self.mock_io.get_prepared_fw_info.side_effect = [
+            WEDGED_PD_FW_INFO,
+            WEDGED_PD_FW_INFO,
+            HEALTHY_FW_INFO,
+            HEALTHY_FW_INFO,
+        ]
+
+        with (
+            mock.patch("ucd.ucd500.UniTAP.OpfHandlerInternal"),
+            mock.patch("ucd.ucd500.time.sleep"),
+        ):
+            reply = self.server.SetRoleVideoTester(
+                video_pb2.SetRoleRequest(
+                    id=FAKE_SERIAL,
+                    role=video_pb2.ROLE_USBCSOURCE_USBCSINK,
+                ),
+                self.context,
+            )
+
+        self.assertTrue(reply.success)
+        self.mock_role.pdcrx.controls.reset.assert_called_once()
+        self.assertEqual(self.mock_dev.select_role.call_count, 2)
+        self.mock_tsilib.close.assert_called_once_with(self.mock_dev)
+
+    def test_set_role_allows_benign_ux_only_zero_after_retries_exhausted(
+        self,
+    ) -> None:
+        """Verifies benign UX: 0.0.0 with healthy UF/PDRX succeeds at end."""
+        self.server.OpenVideoTester(
+            video_pb2.OpenVideoTesterRequest(id=FAKE_SERIAL), self.context
+        )
+        benign_ux_zero_fw = (
+            "UCD-500|2236C961|UX: 0.0.0, UF: 1.0.22, PDRX: 0.2.3, PDTX: 0.2.3|"
+            "1.0|2048"
+        )
+        self.mock_io.get_prepared_fw_info.return_value = benign_ux_zero_fw
+
+        with (
+            mock.patch("ucd.ucd500.UniTAP.OpfHandlerInternal"),
+            mock.patch("ucd.ucd500.time.sleep"),
+        ):
+            reply = self.server.SetRoleVideoTester(
+                video_pb2.SetRoleRequest(
+                    id=FAKE_SERIAL,
+                    role=video_pb2.ROLE_USBCSOURCE_USBCSINK,
+                ),
+                self.context,
+            )
+
+        self.assertTrue(reply.success)
+        self.mock_io.set.assert_called_with(0x210, 0x40000000)
+        self.assertEqual(self.mock_dev.select_role.call_count, 3)
+
+    def test_set_role_recovers_pdrx_zero_with_concurrent_benign_ux_zero(
+        self,
+    ) -> None:
+        """Verifies pdcrx is reset even when UX: 0.0.0 is also present."""
+        self.server.OpenVideoTester(
+            video_pb2.OpenVideoTesterRequest(id=FAKE_SERIAL), self.context
+        )
+        ux_and_pdrx_zero_fw = (
+            "UCD-500|2236C961|UX: 0.0.0, UF: 1.0.22, PDRX: 0.0.0, PDTX: 0.2.3|"
+            "1.0|2048"
+        )
+        benign_ux_zero_fw = (
+            "UCD-500|2236C961|UX: 0.0.0, UF: 1.0.22, PDRX: 0.2.3, PDTX: 0.2.3|"
+            "1.0|2048"
+        )
+        self.mock_io.get_prepared_fw_info.side_effect = [
+            ux_and_pdrx_zero_fw,
+            benign_ux_zero_fw,
+            benign_ux_zero_fw,
+            benign_ux_zero_fw,
+            benign_ux_zero_fw,
+        ]
+
+        with (
+            mock.patch("ucd.ucd500.UniTAP.OpfHandlerInternal"),
+            mock.patch("ucd.ucd500.time.sleep"),
+        ):
+            reply = self.server.SetRoleVideoTester(
+                video_pb2.SetRoleRequest(
+                    id=FAKE_SERIAL,
+                    role=video_pb2.ROLE_USBCSOURCE_USBCSINK,
+                ),
+                self.context,
+            )
+
+        self.assertTrue(reply.success)
+        self.mock_role.pdcrx.controls.reset.assert_called_once()
+        self.mock_io.set.assert_called_with(0x210, 0x40000000)
+        self.assertEqual(self.mock_dev.select_role.call_count, 3)
+
+    @mock.patch("ucd.server.time.sleep")
+    def test_pipeline_reset_prefers_tsi_port_io_and_close_breaks_ref_cycle(
+        self, mock_sleep: mock.MagicMock
+    ) -> None:
+        """Verifies _TSIPort__io lookup and _close_device cycle break."""
+        del mock_sleep
+        self._open_and_set_role()
+        tsi_port_io = mock.MagicMock()
+        self.mock_port_rx._TSIPort__io = tsi_port_io
+        self.server._reset_video_capturer_pipeline()
+
+        tsi_port_io.set.assert_has_calls(
+            [
+                mock.call(0x302, 0),
+                mock.call(0x301, 2),
+                mock.call(0x5002C004, 1),
+            ]
+        )
+
+        self.server._close_device()
+        self.assertIsNone(self.mock_dev.opf_handler)
+        self.mock_io.set_role.assert_called_with(None)
 
 
 if __name__ == "__main__":

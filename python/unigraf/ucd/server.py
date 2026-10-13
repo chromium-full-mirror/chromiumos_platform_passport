@@ -11,12 +11,13 @@ using the UniTAP library.
 
 import atexit
 import functools
+import gc
+import glob
 import logging
+import os
 import re
 import tempfile
 import time
-import glob
-import os
 
 # pylint: disable=import-error
 from chromiumos.test.lab.api.passport import (
@@ -60,6 +61,13 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
     - _get_number_of_video_streams
     - _role_set_quirks
     """
+
+    _TSI_DEVCAP_CONTROL = 0x210
+    _TSI_DEVCAP_FLUSH_FX3 = 0x40000000
+    _TSI_W_CAP_COMMAND = 0x301
+    _TSI_CAP_CMD_STOP = 2
+    _TSI_CAP_CONFIG = 0x302
+    _TSI_USBC_FLUSH_BULK_PIPES_W = 0x5002C004
 
     @log_functionality.logger
     def __init__(self, device_name):
@@ -137,7 +145,112 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
 
         return video_pb2.GetVideoTestersResponse(testers=ret)
 
-    def _ensure_video_capturer_idle(self):
+    def _reset_video_capturer_pipeline(self) -> None:
+        """Force-clears the video capturer pipeline and FPGA capture state."""
+        if self._port_rx is None:
+            return
+
+        running_status = getattr(
+            getattr(UniTAP, "EventCaptureStatus", None), "Running", object()
+        )
+        active_event_capturers = []
+        for port in (self._port_rx, self._port_tx):
+            event_capturer = getattr(port, "event_capturer", None)
+            if (
+                event_capturer is not None
+                and getattr(event_capturer, "status", None) == running_status
+            ):
+                saved_events = None
+                try:
+                    res = getattr(
+                        event_capturer, "_EventCapturer__result", None
+                    )
+                    if isinstance(getattr(res, "buffer", None), list):
+                        saved_events = list(res.buffer)
+                    event_capturer.stop()
+                    active_event_capturers.append(
+                        (event_capturer, saved_events)
+                    )
+                except Exception as e:  # pylint: disable=broad-except
+                    logging.debug(
+                        "Failed to stop event_capturer during reset: %s", e
+                    )
+
+        try:
+            self._port_rx.video_capturer.stop()
+        except Exception as e:  # pylint: disable=broad-except
+            logging.debug("Failed to stop video_capturer during reset: %s", e)
+
+        port_dict = getattr(self._port_rx, "__dict__", {})
+        if "_TSIPort__io" in port_dict:
+            port_io = (
+                self._port_rx._TSIPort__io  # pylint: disable=protected-access
+            )
+        else:
+            port_io = getattr(self._port_rx, "_Port__io", None) or getattr(
+                self._port_rx, "_TSIPort__io", None
+            )
+        if port_io is not None:
+            for reg, val in (
+                (self._TSI_CAP_CONFIG, 0),
+                (self._TSI_W_CAP_COMMAND, self._TSI_CAP_CMD_STOP),
+                (self._TSI_USBC_FLUSH_BULK_PIPES_W, 1),
+            ):
+                try:
+                    port_io.set(reg, val)
+                except Exception as e:  # pylint: disable=broad-except
+                    logging.debug(
+                        "Failed to write TSI reg %#x=%#x during capturer"
+                        " reset: %s",
+                        reg,
+                        val,
+                        e,
+                    )
+
+        if self._dev is not None:
+            try:
+                self._dev._TSIDevice__capturer.clear_bulk_buffer()  # pylint: disable=protected-access
+            except Exception as e:  # pylint: disable=broad-except
+                logging.debug("Failed to clear bulk buffer during reset: %s", e)
+            try:
+                self._dev._TSIDevice__memory_manager.reset()  # pylint: disable=protected-access
+            except Exception as e:  # pylint: disable=broad-except
+                logging.debug(
+                    "Failed to reset video memory manager during reset: %s", e
+                )
+
+        if (
+            self._port_rx.video_capturer.status
+            != UniTAP.VideoCaptureStatus.Idle
+        ):
+            try:
+                try:
+                    self._port_rx.video_capturer.start(
+                        frames_count=0, stream_number=0
+                    )
+                finally:
+                    self._port_rx.video_capturer.stop()
+                time.sleep(0.2)
+            except Exception as e:  # pylint: disable=broad-except
+                logging.debug(
+                    "Failed 0-frame pulse during capturer reset: %s", e
+                )
+
+        for event_capturer, saved_events in active_event_capturers:
+            try:
+                event_capturer.start()
+                if saved_events:
+                    res = getattr(
+                        event_capturer, "_EventCapturer__result", None
+                    )
+                    if isinstance(getattr(res, "buffer", None), list):
+                        res.buffer[:0] = saved_events
+            except Exception as e:  # pylint: disable=broad-except
+                logging.debug(
+                    "Failed to restart event_capturer after reset: %s", e
+                )
+
+    def _ensure_video_capturer_idle(self) -> None:
         """Ensures the video capturer is Idle, stopping it if needed."""
         if self._port_rx is None:
             return
@@ -155,9 +268,46 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
 
             current_status = self._port_rx.video_capturer.status
             if current_status != UniTAP.VideoCaptureStatus.Idle:
+                self._reset_video_capturer_pipeline()
+                current_status = self._port_rx.video_capturer.status
+
+            if current_status != UniTAP.VideoCaptureStatus.Idle:
                 raise RuntimeError(
                     f"Video capturer is not idle (status: {current_status})"
                 )
+
+    def _get_active_fw_components(self, role=None) -> list[str]:
+        """Returns the firmware component names active for the given role."""
+        target_role = self._role if role is None else role
+        fw_components = ["UX", "UF"]
+        if hasattr(target_role, "pdcrx"):
+            fw_components.append("PDRX")
+        if hasattr(target_role, "pdctx"):
+            fw_components.append("PDTX")
+        return fw_components
+
+    def _get_corrupted_fw_components(
+        self, fw_info: str, role=None
+    ) -> list[str]:
+        """Returns active firmware components reporting 0.0.0 (or EMPTY)."""
+        if not fw_info:
+            return ["EMPTY"]
+        corrupted = []
+        for comp in self._get_active_fw_components(role):
+            if re.search(rf"\b{comp}:\s*0\.0\.0(?:\.0)?\b", fw_info):
+                corrupted.append(comp)
+        return corrupted
+
+    def _is_benign_ux_only_corruption(self, fw_info: str, role=None) -> bool:
+        """Checks if only UX is 0.0.0 while UF and active PD are healthy."""
+        if self._get_corrupted_fw_components(fw_info, role) != ["UX"]:
+            return False
+        for comp in self._get_active_fw_components(role):
+            if comp == "UX":
+                continue
+            if not re.search(rf"\b{comp}:\s*\d+\.\d+\.\d+", fw_info):
+                return False
+        return True
 
     @log_functionality.logger
     def SetRoleVideoTester(self, request, _):
@@ -175,13 +325,10 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
         self._role_set_quirks(self._last_requested_role)
         self._ensure_video_capturer_idle()
         fw_info = self._get_fw_info()
-        fw_components = ["UX", "UF"]
-        if hasattr(self._role, "pdcrx"):
-            fw_components.append("PDRX")
-        if hasattr(self._role, "pdctx"):
-            fw_components.append("PDTX")
-        pattern = rf"\b(?:{'|'.join(fw_components)}):\s*0\.0\.0(?:\.0)?\b"
-        if not fw_info or re.search(pattern, fw_info):
+        corrupted = self._get_corrupted_fw_components(fw_info, self._role)
+        if corrupted and not self._is_benign_ux_only_corruption(
+            fw_info, self._role
+        ):
             raise RuntimeError(
                 f"Corrupted UCD firmware version detected: {fw_info}"
             )
@@ -198,7 +345,7 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
         """Stops active capturers and closes the current UCD handle."""
         for port in (self._port_rx, self._port_tx):
             if port is not None:
-                for attr in ("video_capturer", "event_capturer"):
+                for attr in ("event_capturer", "video_capturer"):
                     try:
                         getattr(port, attr).stop()
                     except Exception as e:  # pylint: disable=broad-except
@@ -211,6 +358,15 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
         self._role = None
         if self._dev is not None:
             try:
+                self._dev.opf_handler = None
+                self._dev._TSIDevice__io.set_role(  # pylint: disable=protected-access
+                    None
+                )
+            except Exception as e:  # pylint: disable=broad-except
+                logging.debug(
+                    "Failed to clear role references before close: %s", e
+                )
+            try:
                 self._tsilib.close(self._dev)
             except Exception as e:  # pylint: disable=broad-except
                 logging.warning(
@@ -220,6 +376,7 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
                 )
             finally:
                 self._dev = None
+                gc.collect()
 
     @log_functionality.logger
     def OpenVideoTester(self, request, context):
@@ -431,6 +588,7 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
                 )
                 last_error = e
                 if attempt < max_attempts:
+                    self._reset_video_capturer_pipeline()
                     time.sleep(0.5)
 
         context.set_code(grpc.StatusCode.UNAVAILABLE)

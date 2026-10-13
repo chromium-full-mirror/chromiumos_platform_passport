@@ -304,6 +304,58 @@ class Ucd500Server(server.UcdServer):
 
     _ROLE_SELECT_RETRIES = 2
 
+    def _recover_corrupted_fw_in_place(
+        self, fw_info: str, corrupted: list[str]
+    ) -> tuple[str, list[str]]:
+        """Attempts in-place recovery of corrupted PD or FX3 firmware state."""
+        if "UF" not in corrupted and "EMPTY" not in corrupted:
+            pd_controllers = (
+                ("PDRX", "pdcrx", "RX"),
+                ("PDTX", "pdctx", "TX"),
+            )
+            reset_attempted = False
+            for comp, attr, label in pd_controllers:
+                if comp in corrupted and hasattr(self._role, attr):
+                    reset_attempted = True
+                    logging.warning(
+                        "UCD %s reported %s: 0.0.0 (%s); resetting %s PD"
+                        " controller in place.",
+                        self._serial,
+                        comp,
+                        fw_info,
+                        label,
+                    )
+                    try:
+                        getattr(self._role, attr).controls.reset()
+                        time.sleep(1.0)
+                    except Exception as e:  # pylint: disable=broad-except
+                        logging.debug(
+                            "Failed to reset %s on %s: %s",
+                            attr,
+                            self._serial,
+                            e,
+                        )
+            if reset_attempted:
+                fw_info = self._get_fw_info()
+                corrupted = self._get_corrupted_fw_components(
+                    fw_info, self._role
+                )
+
+        if "UX" in corrupted:
+            try:
+                self._dev._TSIDevice__io.set(  # pylint: disable=protected-access
+                    self._TSI_DEVCAP_CONTROL,
+                    self._TSI_DEVCAP_FLUSH_FX3,
+                )
+            except Exception as e:  # pylint: disable=broad-except
+                logging.debug(
+                    "Failed to flush FX3 status on %s: %s",
+                    self._serial,
+                    e,
+                )
+
+        return fw_info, corrupted
+
     def _select_role(self, role_to_set):
         """Selects the UCD role, reopening the handle on transient errors."""
         for attempt in range(self._ROLE_SELECT_RETRIES + 1):
@@ -312,10 +364,30 @@ class Ucd500Server(server.UcdServer):
                     self._dev = self._tsilib.open(self._serial)
                 self._role = self._dev.select_role(role_to_set)
                 fw_info = self._get_fw_info()
-                if not fw_info or "UX: 0.0.0" in fw_info:
+                corrupted = self._get_corrupted_fw_components(
+                    fw_info, self._role
+                )
+                if corrupted:
+                    fw_info, corrupted = self._recover_corrupted_fw_in_place(
+                        fw_info, corrupted
+                    )
+
+                if corrupted:
+                    if (
+                        attempt == self._ROLE_SELECT_RETRIES
+                        and self._is_benign_ux_only_corruption(
+                            fw_info, self._role
+                        )
+                    ):
+                        logging.warning(
+                            "Proceeding despite UX: 0.0.0 after %d attempts"
+                            " because FPGA and PD firmware are healthy: %s",
+                            self._ROLE_SELECT_RETRIES + 1,
+                            fw_info,
+                        )
+                        return
                     raise RuntimeError(
-                        "Corrupted UCD firmware version after role selection:"
-                        f" {fw_info}"
+                        f"Corrupted UCD firmware version detected: {fw_info}"
                     )
                 return
             except Exception as e:  # pylint: disable=broad-except
