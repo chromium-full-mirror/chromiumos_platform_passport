@@ -275,7 +275,7 @@ class Ucd500Server(server.UcdServer):
             return video_pb2.StopEventCaptureResponse()
 
         # pylint: disable=protected-access
-        fw_parts = self._dev._TSIDevice__io.get_prepared_fw_info().split("|")
+        fw_parts = self._get_fw_info().split("|")
         if len(fw_parts) >= 3:
             for port in (self._port_tx, self._port_rx):
                 port.event_capturer._EventCapturer__fw_info[
@@ -302,20 +302,37 @@ class Ucd500Server(server.UcdServer):
                 dprx_capture_html=f_rx.read(),
             )
 
+    _ROLE_SELECT_RETRIES = 2
+
+    def _select_role(self, role_to_set):
+        """Selects the UCD role, reopening the handle on transient errors."""
+        for attempt in range(self._ROLE_SELECT_RETRIES + 1):
+            try:
+                if self._dev is None:
+                    self._dev = self._tsilib.open(self._serial)
+                self._role = self._dev.select_role(role_to_set)
+                fw_info = self._get_fw_info()
+                if not fw_info or "UX: 0.0.0" in fw_info:
+                    raise RuntimeError(
+                        "Corrupted UCD firmware version after role selection:"
+                        f" {fw_info}"
+                    )
+                return
+            except Exception as e:  # pylint: disable=broad-except
+                if attempt == self._ROLE_SELECT_RETRIES:
+                    raise
+                logging.warning(
+                    "UCD role selection attempt %d/%d failed (%s); reopening"
+                    " device %s to clear USB endpoint state.",
+                    attempt + 1,
+                    self._ROLE_SELECT_RETRIES + 1,
+                    e,
+                    self._serial,
+                )
+                self._close_device()
+
     def _role_set_quirks(self, role_to_set):
-        self._role = self._dev.select_role(role_to_set)
-        fw_info = (
-            self._dev._TSIDevice__io.get_prepared_fw_info()  # pylint: disable=protected-access
-        )
-        if not fw_info or "UX: 0.0.0" in fw_info:
-            logging.warning(
-                "UCD firmware read failed after role selection; reopening to"
-                " clear USB endpoint state."
-            )
-            self._role = None
-            self._tsilib.close(self._dev)
-            self._dev = self._tsilib.open(self._serial)
-            self._role = self._dev.select_role(role_to_set)
+        self._select_role(role_to_set)
         self._port_rx = self._role.dprx
         self._port_tx = self._role.dptx
         self._dev.opf_handler = UniTAP.OpfHandlerInternal(

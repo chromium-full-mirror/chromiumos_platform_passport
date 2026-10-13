@@ -53,6 +53,57 @@ except ModuleNotFoundError:
     sys.modules["PIL"] = pil_stub
     sys.modules["PIL.Image"] = pil_image_stub
 
+try:
+    import UniTAP  # pylint: disable=unused-import
+except ModuleNotFoundError:
+    unitap_stub = mock.MagicMock()
+
+    class _VideoCaptureStatus(enum.Enum):
+        Idle = 0
+        LiveModeActive = 1
+        Malfunction = 2
+
+    class _NotExistingRoleSelected(Exception):
+        pass
+
+    class _DeviceRoleIsAlreadySelected(Exception):
+        pass
+
+    class _USBCSourceUSBCSink:
+        pass
+
+    class _DPSourceUSBCSink:
+        pass
+
+    class _USBCSourceDPSink:
+        pass
+
+    class _DPSourceDPSink:
+        pass
+
+    class _HDMISourceHDMISink:
+        pass
+
+    unitap_stub.VideoCaptureStatus = _VideoCaptureStatus
+    unitap_stub.dev.UCD422.HDMISourceHDMISink = _HDMISourceHDMISink
+    unitap_stub.dev.UCD500.USBCSourceUSBCSink = _USBCSourceUSBCSink
+    unitap_stub.dev.UCD500.DPSourceUSBCSink = _DPSourceUSBCSink
+    unitap_stub.dev.UCD500.USBCSourceDPSink = _USBCSourceDPSink
+    unitap_stub.dev.UCD500.DPSourceDPSink = _DPSourceDPSink
+    unitap_stub.dev.device.NotExistingRoleSelected = _NotExistingRoleSelected
+    unitap_stub.dev.device.DeviceRoleIsAlreadySelected = (
+        _DeviceRoleIsAlreadySelected
+    )
+    sys.modules["UniTAP"] = unitap_stub
+    sys.modules["UniTAP.dev"] = unitap_stub.dev
+    sys.modules["UniTAP.dev.modules"] = unitap_stub.dev.modules
+    sys.modules["UniTAP.dev.modules.dut_tests"] = (
+        unitap_stub.dev.modules.dut_tests
+    )
+    sys.modules["UniTAP.dev.modules.dut_tests.dut_default_params"] = (
+        unitap_stub.dev.modules.dut_tests.dut_default_params
+    )
+
 # pylint: disable=wrong-import-position,import-error
 from chromiumos.test.lab.api.passport import (
     video_tester_service_pb2 as video_pb2,
@@ -305,6 +356,7 @@ class TestUcd500Server(unittest.TestCase):
         self.mock_io.get_prepared_fw_info.side_effect = [
             stalled_fw,
             HEALTHY_FW_INFO,
+            HEALTHY_FW_INFO,
         ]
 
         with (
@@ -322,6 +374,120 @@ class TestUcd500Server(unittest.TestCase):
         self.assertTrue(reply.success)
         self.assertEqual(self.mock_dev.select_role.call_count, 2)
         self.mock_tsilib.close.assert_called_once_with(self.mock_dev)
+
+    def test_set_role_reopens_on_not_existing_role_selected(self) -> None:
+        """Verifies _role_set_quirks reopens when select_role raises."""
+        self.server.OpenVideoTester(
+            video_pb2.OpenVideoTesterRequest(id=FAKE_SERIAL), self.context
+        )
+        self.mock_dev.select_role.side_effect = [
+            UniTAP.dev.device.NotExistingRoleSelected(
+                "Role is not supported by the device."
+            ),
+            self.mock_role,
+        ]
+
+        with (
+            mock.patch("ucd.ucd500.UniTAP.OpfHandlerInternal"),
+            mock.patch("ucd.ucd500.time.sleep"),
+        ):
+            reply = self.server.SetRoleVideoTester(
+                video_pb2.SetRoleRequest(
+                    id=FAKE_SERIAL,
+                    role=video_pb2.ROLE_USBCSOURCE_USBCSINK,
+                ),
+                self.context,
+            )
+
+        self.assertTrue(reply.success)
+        self.assertEqual(self.mock_dev.select_role.call_count, 2)
+        self.mock_tsilib.close.assert_called_once_with(self.mock_dev)
+
+    def test_set_role_reopens_twice_on_already_selected_then_ux_zero(
+        self,
+    ) -> None:
+        """Verifies _role_set_quirks recovers across 2 reopens."""
+        self.server.OpenVideoTester(
+            video_pb2.OpenVideoTesterRequest(id=FAKE_SERIAL), self.context
+        )
+        stalled_fw = (
+            "UCD-500|2236C961|UX: 0.0.0, UF: 0.0.0, PDRX: 0.0.0, PDTX: 0.0.0|"
+            "1.0|2048"
+        )
+        self.mock_dev.select_role.side_effect = [
+            UniTAP.dev.device.DeviceRoleIsAlreadySelected(
+                "Device role is already selected."
+            ),
+            self.mock_role,
+            self.mock_role,
+        ]
+        self.mock_io.get_prepared_fw_info.side_effect = [
+            stalled_fw,
+            HEALTHY_FW_INFO,
+            HEALTHY_FW_INFO,
+        ]
+
+        with (
+            mock.patch("ucd.ucd500.UniTAP.OpfHandlerInternal"),
+            mock.patch("ucd.ucd500.time.sleep"),
+        ):
+            reply = self.server.SetRoleVideoTester(
+                video_pb2.SetRoleRequest(
+                    id=FAKE_SERIAL,
+                    role=video_pb2.ROLE_USBCSOURCE_USBCSINK,
+                ),
+                self.context,
+            )
+
+        self.assertTrue(reply.success)
+        self.assertEqual(self.mock_dev.select_role.call_count, 3)
+        self.assertEqual(self.mock_tsilib.close.call_count, 2)
+
+    def test_set_role_recovers_even_when_close_raises(self) -> None:
+        """Verifies _select_role still reopens if close() raises on bad dev."""
+        self.server.OpenVideoTester(
+            video_pb2.OpenVideoTesterRequest(id=FAKE_SERIAL), self.context
+        )
+        self.mock_dev.select_role.side_effect = [
+            UniTAP.dev.device.NotExistingRoleSelected(
+                "Role is not supported by the device."
+            ),
+            self.mock_role,
+        ]
+        self.mock_tsilib.close.side_effect = [
+            RuntimeError("USB close error"),
+            None,
+        ]
+
+        with (
+            mock.patch("ucd.ucd500.UniTAP.OpfHandlerInternal"),
+            mock.patch("ucd.ucd500.time.sleep"),
+        ):
+            reply = self.server.SetRoleVideoTester(
+                video_pb2.SetRoleRequest(
+                    id=FAKE_SERIAL,
+                    role=video_pb2.ROLE_USBCSOURCE_USBCSINK,
+                ),
+                self.context,
+            )
+
+        self.assertTrue(reply.success)
+        self.assertEqual(self.mock_dev.select_role.call_count, 2)
+        self.assertEqual(self.mock_tsilib.open.call_count, 2)
+
+    def test_open_video_tester_closes_stale_open_device(self) -> None:
+        """Verifies OpenVideoTester closes a stale open handle first."""
+        self._open_and_set_role()
+        reply = self.server.OpenVideoTester(
+            video_pb2.OpenVideoTesterRequest(id=FAKE_SERIAL), self.context
+        )
+        self.assertTrue(reply.success)
+        self.mock_port_rx.video_capturer.stop.assert_called_once()
+        self.mock_port_rx.event_capturer.stop.assert_called_once()
+        self.mock_port_tx.video_capturer.stop.assert_called_once()
+        self.mock_port_tx.event_capturer.stop.assert_called_once()
+        self.mock_tsilib.close.assert_called_once_with(self.mock_dev)
+        self.assertEqual(self.mock_tsilib.open.call_count, 2)
 
     def test_close_video_tester_stops_capturers(self) -> None:
         """Verifies CloseVideoTester stops active capturers before closing."""

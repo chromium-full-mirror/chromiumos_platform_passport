@@ -174,9 +174,7 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
         self._last_requested_role = translate.UCD_ROLES[request.role]
         self._role_set_quirks(self._last_requested_role)
         self._ensure_video_capturer_idle()
-        fw_info = (
-            self._dev._TSIDevice__io.get_prepared_fw_info()  # pylint: disable=protected-access
-        )
+        fw_info = self._get_fw_info()
         fw_components = ["UX", "UF"]
         if hasattr(self._role, "pdcrx"):
             fw_components.append("PDRX")
@@ -190,9 +188,49 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
 
         return video_pb2.SetRoleResponse(success=True)
 
+    def _get_fw_info(self) -> str:
+        """Reads the prepared firmware version from the open UCD handle."""
+        return (
+            self._dev._TSIDevice__io.get_prepared_fw_info()  # pylint: disable=protected-access
+        )
+
+    def _close_device(self):
+        """Stops active capturers and closes the current UCD handle."""
+        for port in (self._port_rx, self._port_tx):
+            if port is not None:
+                for attr in ("video_capturer", "event_capturer"):
+                    try:
+                        getattr(port, attr).stop()
+                    except Exception as e:  # pylint: disable=broad-except
+                        logging.debug(
+                            "Failed to stop %s during close: %s", attr, e
+                        )
+
+        self._port_rx = None
+        self._port_tx = None
+        self._role = None
+        if self._dev is not None:
+            try:
+                self._tsilib.close(self._dev)
+            except Exception as e:  # pylint: disable=broad-except
+                logging.warning(
+                    "Error closing UCD device %s (%s); clearing handle anyway.",
+                    self._serial,
+                    e,
+                )
+            finally:
+                self._dev = None
+
     @log_functionality.logger
     def OpenVideoTester(self, request, context):
         """Opens a specific video tester for interaction."""
+        if self._dev is not None:
+            logging.warning(
+                "Tester %s was left open; closing stale handle before"
+                " reopening.",
+                self._serial,
+            )
+            self._close_device()
 
         try:
             self._dev = self._tsilib.open(request.id)
@@ -216,19 +254,7 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
         if self._dev is None:
             raise RuntimeError(f"Serial {request.id} was never open")
 
-        for port in (self._port_rx, self._port_tx):
-            if port is not None:
-                for attr in ("video_capturer", "event_capturer"):
-                    try:
-                        getattr(port, attr).stop()
-                    except Exception:
-                        pass
-
-        self._port_rx = None
-        self._port_tx = None
-        self._role = None
-        self._tsilib.close(self._dev)
-        self._dev = None
+        self._close_device()
 
         return video_pb2.CloseVideoTesterResponse(success=True)
 
@@ -565,6 +591,5 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
     @log_functionality.logger
     def __del__(self):
         logging.info("Delete function will ran")
-        if self._dev is not None:
-            self._tsilib.close(self._dev)
+        self._close_device()
         self._tsilib.cleanup()
