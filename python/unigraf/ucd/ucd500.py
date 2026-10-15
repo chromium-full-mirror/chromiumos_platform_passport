@@ -2,7 +2,7 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-"""Provides a gRPC server to control Unigraf video testing hardware.
+"""Provides a gRPC server to control Unigraf UCD-500 video testing hardware.
 
 This module implements the VideoTesterService gRPC service, allowing clients
 to discover, open, close, and configure Unigraf UCD-500 series video testers
@@ -10,7 +10,6 @@ using the UniTAP library.
 """
 
 import logging
-import tempfile
 import time
 
 # pylint: disable=import-error
@@ -18,7 +17,6 @@ from chromiumos.test.lab.api.passport import (
     video_tester_service_pb2 as video_pb2,
 )
 from ucd import server
-from ucd import translate
 import UniTAP
 
 from utils import log_functionality
@@ -28,11 +26,10 @@ from utils import log_functionality
 
 
 class Ucd500Server(server.UcdServer):
-    """Implements the gRPC service for controlling Unigraf video testers.
+    """Implements the gRPC service for Unigraf UCD-500 video testers.
 
-    This class provides methods to discover, open, close, and configure
-    Unigraf UCD-500 series video testing devices. It uses the UniTAP library
-    to interact with the hardware.
+    This class provides DisplayPort 1.4/2.1 and USB-C DP Alt Mode link,
+    event capture, and role configuration methods for UCD-500 devices.
     """
 
     @log_functionality.logger
@@ -40,6 +37,7 @@ class Ucd500Server(server.UcdServer):
         super().__init__("UCD-500")
         logging.info("VideoTesterServiceServicer init done")
 
+    @server.synchronized
     @log_functionality.logger
     def SetLinkVideoTester(self, request, context):
         """Sets advanced link parameters for a given video tester."""
@@ -82,9 +80,11 @@ class Ucd500Server(server.UcdServer):
                 video_pb2.VIDEO_SPECIFICATION_DP_2_0,
                 video_pb2.VIDEO_SPECIFICATION_DP_2_1,
             ]:
-                if request.video_spec == getattr(video_pb2, 'VIDEO_SPECIFICATION_DP_1_2', -1):
+                dp_1_2 = getattr(video_pb2, "VIDEO_SPECIFICATION_DP_1_2", -1)
+                dp_1_1 = getattr(video_pb2, "VIDEO_SPECIFICATION_DP_1_1", -1)
+                if request.video_spec == dp_1_2:
                     caps.bit_rate = 5.4
-                elif request.video_spec == getattr(video_pb2, 'VIDEO_SPECIFICATION_DP_1_1', -1):
+                elif request.video_spec == dp_1_1:
                     caps.bit_rate = 2.7
                 else:
                     caps.bit_rate = 8.1
@@ -120,10 +120,10 @@ class Ucd500Server(server.UcdServer):
 
         return video_pb2.SetLinkVideoTesterResponse()
 
+    @server.synchronized
     @log_functionality.logger
     def GetLinkVideoTester(self, request, context):
-        """Get the current advanced link parameters for a given video tester."""
-
+        """Gets the current advanced link parameters for a video tester."""
         self._check_serial_active(request.id)
         caps = self._role.dprx.link.capabilities.link_caps_status()
 
@@ -146,38 +146,54 @@ class Ucd500Server(server.UcdServer):
             if 20.0 in caps.dp_128_132_bitrates:
                 link_info.dp_128_bitrates.append(video_pb2.DP_128_BITRATE_20_0)
         else:
-            if getattr(caps, 'bit_rate', None) is not None:
+            dp_1_4 = video_pb2.VIDEO_SPECIFICATION_DP_1_4
+            dp_1_2 = getattr(video_pb2, "VIDEO_SPECIFICATION_DP_1_2", dp_1_4)
+            dp_1_1 = getattr(video_pb2, "VIDEO_SPECIFICATION_DP_1_1", dp_1_4)
+            if getattr(caps, "bit_rate", None) is not None:
                 if caps.bit_rate >= 8.1:
-                    link_info.video_spec = video_pb2.VIDEO_SPECIFICATION_DP_1_4
-                    link_info.dp_810_bitrates.append(video_pb2.DP_810_BITRATE_8_1)
+                    link_info.video_spec = dp_1_4
+                    link_info.dp_810_bitrates.append(
+                        video_pb2.DP_810_BITRATE_8_1
+                    )
                 elif caps.bit_rate >= 6.75:
-                    link_info.video_spec = video_pb2.VIDEO_SPECIFICATION_DP_1_4
-                    link_info.dp_810_bitrates.append(video_pb2.DP_810_BITRATE_6_75)
+                    link_info.video_spec = dp_1_4
+                    link_info.dp_810_bitrates.append(
+                        video_pb2.DP_810_BITRATE_6_75
+                    )
                 elif caps.bit_rate >= 5.4:
-                    link_info.video_spec = getattr(video_pb2, 'VIDEO_SPECIFICATION_DP_1_2', video_pb2.VIDEO_SPECIFICATION_DP_1_4)
-                    link_info.dp_810_bitrates.append(video_pb2.DP_810_BITRATE_5_4)
+                    link_info.video_spec = dp_1_2
+                    link_info.dp_810_bitrates.append(
+                        video_pb2.DP_810_BITRATE_5_4
+                    )
                 elif caps.bit_rate >= 2.7:
-                    link_info.video_spec = getattr(video_pb2, 'VIDEO_SPECIFICATION_DP_1_1', video_pb2.VIDEO_SPECIFICATION_DP_1_4)
-                    link_info.dp_810_bitrates.append(video_pb2.DP_810_BITRATE_2_7)
+                    link_info.video_spec = dp_1_1
+                    link_info.dp_810_bitrates.append(
+                        video_pb2.DP_810_BITRATE_2_7
+                    )
                 elif caps.bit_rate >= 1.62:
-                    link_info.video_spec = getattr(video_pb2, 'VIDEO_SPECIFICATION_DP_1_1', video_pb2.VIDEO_SPECIFICATION_DP_1_4)
-                    link_info.dp_810_bitrates.append(video_pb2.DP_810_BITRATE_1_62)
+                    link_info.video_spec = dp_1_1
+                    link_info.dp_810_bitrates.append(
+                        video_pb2.DP_810_BITRATE_1_62
+                    )
             else:
-                link_info.video_spec = video_pb2.VIDEO_SPECIFICATION_DP_1_4
+                link_info.video_spec = dp_1_4
 
         link_info.dsc = caps.dsc
 
         return link_info
 
+    @server.synchronized
     @log_functionality.logger
     def AttachVideoTester(self, request, context):
-        """Simulate attaching or detaching a display or sink on a video tester."""
+        """Simulates attaching or detaching a display or sink."""
         self._check_serial_active(request.id)
 
         if isinstance(self._role, UniTAP.dev.UCD500.USBCSourceUSBCSink):
             self._role.pdcrx.controls.attach(request.attach)
             self._role.dprx.link.set_assert_state(request.attach)
-        elif hasattr(self._port_rx, "link") and hasattr(self._port_rx.link, "set_assert_state"):
+        elif hasattr(self._port_rx, "link") and hasattr(
+            self._port_rx.link, "set_assert_state"
+        ):
             self._port_rx.link.set_assert_state(request.attach)
         else:
             raise RuntimeError(
@@ -186,13 +202,22 @@ class Ucd500Server(server.UcdServer):
 
         return video_pb2.AttachVideoTesterResponse()
 
+    @server.synchronized
     @log_functionality.logger
     def HpdPulseVideoTester(self, request, context):
         """Sends an HPD (Hot Plug Detect) pulse to a video tester."""
         self._check_serial_active(request.id)
 
-        duration_ms = request.pulse_duration_ms if request.HasField("pulse_duration_ms") and request.pulse_duration_ms > 0 else 500
-        if duration_ms >= 100 and hasattr(self._port_rx, "link") and hasattr(self._port_rx.link, "set_assert_state"):
+        has_duration = (
+            request.HasField("pulse_duration_ms")
+            and request.pulse_duration_ms > 0
+        )
+        duration_ms = request.pulse_duration_ms if has_duration else 500
+        if (
+            duration_ms >= 100
+            and hasattr(self._port_rx, "link")
+            and hasattr(self._port_rx.link, "set_assert_state")
+        ):
             self._port_rx.link.set_assert_state(False)
             time.sleep(duration_ms / 1000.0)
             self._port_rx.link.set_assert_state(True)
@@ -215,9 +240,11 @@ class Ucd500Server(server.UcdServer):
 
         return caps.mst_sink_count if caps.mst else 1
 
+    @server.synchronized
     @log_functionality.logger
     def StartEventCapture(self, request, context):
-        """Start the event capture with the specified filters"""
+        """Starts the event capture with the specified filters."""
+        self._check_serial_active(request.id)
 
         event_config_tx = self._port_tx.event_capturer.event_filter(
             UniTAP.EventFilterDpTx
@@ -251,9 +278,10 @@ class Ucd500Server(server.UcdServer):
 
         return video_pb2.StartEventCaptureResponse()
 
+    @server.synchronized
     def StopEventCapture(self, request, context):
-        """Stop the event capture and optionally get the capture files."""
-
+        """Stops the event capture and optionally gets the capture files."""
+        self._check_serial_active(request.id)
         logging.info("Running StopEventCapture")
 
         self._port_tx.event_capturer.stop()
@@ -267,40 +295,40 @@ class Ucd500Server(server.UcdServer):
         )
 
         logging.info(
-            f"StopEventCapture results are {len(capture_result_tx.buffer)} {len(capture_result_rx.buffer)}"
+            "StopEventCapture results are %d %d",
+            len(capture_result_tx.buffer),
+            len(capture_result_rx.buffer),
         )
 
         # Generate reports only if requested.
         if not request.generate_reports:
             return video_pb2.StopEventCaptureResponse()
 
-        # pylint: disable=protected-access
         fw_parts = self._get_fw_info().split("|")
         if len(fw_parts) >= 3:
             for port in (self._port_tx, self._port_rx):
-                port.event_capturer._EventCapturer__fw_info[
-                    "ucd_fw_version"
-                ] = fw_parts[2]
-        # pylint: enable=protected-access
+                self._update_event_capturer_fw_version(port, fw_parts[2])
 
-        # pylint: disable=R1732
-        tmp_tx = tempfile.NamedTemporaryFile(suffix=".html")
-        tmp_rx = tempfile.NamedTemporaryFile(suffix=".html")
-        # pylint: enable=R1732
-
-        capture_result_tx.save_to_file_all_events(
-            file_format=UniTAP.EventFileFormat.HTML, path=tmp_tx.name
-        )
-        capture_result_rx.save_to_file_all_events(
-            file_format=UniTAP.EventFileFormat.HTML, path=tmp_rx.name
-        )
-
-        with open(tmp_tx.name, "rb") as f_tx, open(tmp_rx.name, "rb") as f_rx:
-            logging.info("Files were found")
-            return video_pb2.StopEventCaptureResponse(
-                dptx_capture_html=f_tx.read(),
-                dprx_capture_html=f_rx.read(),
+        with (
+            server.temp_file_path(suffix=".html") as tx_path,
+            server.temp_file_path(suffix=".html") as rx_path,
+        ):
+            capture_result_tx.save_to_file_all_events(
+                file_format=UniTAP.EventFileFormat.HTML, path=tx_path
             )
+            capture_result_rx.save_to_file_all_events(
+                file_format=UniTAP.EventFileFormat.HTML, path=rx_path
+            )
+
+            with open(tx_path, "rb") as f_tx, open(rx_path, "rb") as f_rx:
+                logging.info("Files were found")
+                dptx_html = f_tx.read()
+                dprx_html = f_rx.read()
+
+        return video_pb2.StopEventCaptureResponse(
+            dptx_capture_html=dptx_html,
+            dprx_capture_html=dprx_html,
+        )
 
     _ROLE_SELECT_RETRIES = 2
 
@@ -342,17 +370,7 @@ class Ucd500Server(server.UcdServer):
                 )
 
         if "UX" in corrupted:
-            try:
-                self._dev._TSIDevice__io.set(  # pylint: disable=protected-access
-                    self._TSI_DEVCAP_CONTROL,
-                    self._TSI_DEVCAP_FLUSH_FX3,
-                )
-            except Exception as e:  # pylint: disable=broad-except
-                logging.debug(
-                    "Failed to flush FX3 status on %s: %s",
-                    self._serial,
-                    e,
-                )
+            self._flush_fx3()
 
         return fw_info, corrupted
 
@@ -361,7 +379,7 @@ class Ucd500Server(server.UcdServer):
         for attempt in range(self._ROLE_SELECT_RETRIES + 1):
             try:
                 if self._dev is None:
-                    self._dev = self._tsilib.open(self._serial)
+                    self._open_device(self._serial)
                 self._role = self._dev.select_role(role_to_set)
                 fw_info = self._get_fw_info()
                 corrupted = self._get_corrupted_fw_components(
@@ -418,7 +436,7 @@ class Ucd500Server(server.UcdServer):
             self._role.pdcrx.capabilities.set_initial_role(
                 UniTAP.pdc.PdcDeviceRole.UFP
             )
-            # Disable PR swap to avoid triggering PDC bugs, this should force snk
+            # Disable PR swap to avoid triggering PDC bugs; force sink role.
             self._role.pdcrx.capabilities.enable_pr_swap(False)
             self._role.pdcrx.capabilities.cc_pull_up(
                 UniTAP.pdc.CCPullUp.Current_3A

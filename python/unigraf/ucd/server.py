@@ -5,19 +5,24 @@
 """Provides a gRPC server to control Unigraf video testing hardware.
 
 This module implements the VideoTesterService gRPC service, allowing clients
-to discover, open, close, and configure Unigraf UCD-500 series video testers
+to discover, open, close, and configure Unigraf UCD series video testers
 using the UniTAP library.
 """
 
 import atexit
+import contextlib
+import fcntl
 import functools
 import gc
 import glob
 import logging
+import math
 import os
 import re
 import tempfile
+import threading
 import time
+from typing import Any
 
 # pylint: disable=import-error
 from chromiumos.test.lab.api.passport import (
@@ -36,6 +41,8 @@ from utils import log_functionality
 
 # pylint: enable=import-error
 
+_DEFAULT_LOCK_TIMEOUT_SEC = 60.0
+
 
 def rsetattr(obj, attr, val):
     pre, _, post = attr.rpartition(".")
@@ -49,15 +56,88 @@ def rgetattr(obj, attr, *args):
     return functools.reduce(_getattr, [obj] + attr.split("."))
 
 
+def _get_lock_timeout(self, args, kwargs) -> tuple[Any, float]:
+    """Extracts the gRPC context and lock acquisition timeout in seconds."""
+    context = kwargs.get("context")
+    if context is None and len(args) >= 2:
+        context = args[1]
+    default_timeout = getattr(
+        self, "_LOCK_TIMEOUT_SEC", _DEFAULT_LOCK_TIMEOUT_SEC
+    )
+    time_remaining_fn = getattr(context, "time_remaining", None)
+    if callable(time_remaining_fn):
+        try:
+            remaining = time_remaining_fn()
+            if (
+                isinstance(remaining, (int, float))
+                and not isinstance(remaining, bool)
+                and math.isfinite(remaining)
+            ):
+                return context, max(0.0, float(remaining))
+        except Exception:  # pylint: disable=broad-except
+            pass
+    return context, float(default_timeout)
+
+
+def synchronized(func):
+    """Serializes RPC and lifecycle calls on a UcdServer instance."""
+
+    @functools.wraps(func)
+    def wrapper(self, *args, **kwargs):
+        lock = getattr(self, "_lock", None)
+        if lock is None:
+            return func(self, *args, **kwargs)
+        context, timeout = _get_lock_timeout(self, args, kwargs)
+        if timeout <= 0:
+            acquired = lock.acquire(blocking=False)
+        else:
+            acquired = lock.acquire(timeout=timeout)
+        if not acquired:
+            msg = (
+                f"Timed out after {timeout:.2f}s waiting for UCD lock in"
+                f" {func.__name__}"
+            )
+            logging.error(msg)
+            if context is not None:
+                context.set_code(grpc.StatusCode.DEADLINE_EXCEEDED)
+                context.set_details(msg)
+                context.abort(grpc.StatusCode.DEADLINE_EXCEEDED, msg)
+            raise TimeoutError(msg)
+        try:
+            return func(self, *args, **kwargs)
+        finally:
+            lock.release()
+
+    return wrapper
+
+
+@contextlib.contextmanager
+def temp_file_path(suffix: str = "", extra_suffixes: tuple[str, ...] = ()):
+    """Creates a closed temporary file path and unlinks it on exit."""
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+        tmp_path = tmp.name
+    try:
+        yield tmp_path
+    finally:
+        for ext in ("",) + tuple(extra_suffixes):
+            path = f"{tmp_path}{ext}"
+            try:
+                if os.path.exists(path):
+                    os.unlink(path)
+            except OSError as e:
+                logging.debug("Failed to remove temp file %s: %s", path, e)
+
+
 class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
-    """Implements some functionality common to all of the unigraf video testers.
+    """Implements functionality common to all Unigraf video testers.
 
     Methods that need specialization:
-    - SetRoleVideoTester
     - SetLinkVideoTester
     - GetLinkVideoTester
     - HpdPulseVideoTester
     - AttachVideoTester
+    - StartEventCapture
+    - StopEventCapture
     - _get_number_of_video_streams
     - _role_set_quirks
     """
@@ -68,9 +148,11 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
     _TSI_CAP_CMD_STOP = 2
     _TSI_CAP_CONFIG = 0x302
     _TSI_USBC_FLUSH_BULK_PIPES_W = 0x5002C004
+    _LOCK_TIMEOUT_SEC = _DEFAULT_LOCK_TIMEOUT_SEC
 
     @log_functionality.logger
     def __init__(self, device_name):
+        self._lock = threading.RLock()
         self._dev = None
         self._serial = None
         self._role = None
@@ -90,11 +172,11 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
         raise NotImplementedError("Method not implemented!")
 
     def GetLinkVideoTester(self, request, context):
-        """Get the current advanced link parameters."""
+        """Gets the current advanced link parameters."""
         raise NotImplementedError("Method not implemented!")
 
     def HpdPulseVideoTester(self, request, context):
-        """Send an HPD (Hot Plug Detect) pulse to a video tester."""
+        """Sends an HPD (Hot Plug Detect) pulse to a video tester."""
         raise NotImplementedError("Method not implemented!")
 
     def AttachVideoTester(self, request, context):
@@ -102,11 +184,11 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
         raise NotImplementedError("Method not implemented!")
 
     def StartEventCapture(self, request, context):
-        """Start the event capture with the specified filters"""
+        """Starts the event capture with the specified filters."""
         raise NotImplementedError("Method not implemented!")
 
     def StopEventCapture(self, request, context):
-        """Stop the event capture and optionally get the capture files."""
+        """Stops the event capture and optionally gets the capture files."""
         raise NotImplementedError("Method not implemented!")
 
     def _get_number_of_video_streams(self):
@@ -115,35 +197,183 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
     def _role_set_quirks(self, role_to_set):
         raise RuntimeError("Method is not implemented!")
 
-    # =========== Common methods ===========
-    @log_functionality.logger
-    def GetVideoTesters(self, _, context):
-        """Retrieves a list of available video testers."""
+    # =========== Low-level UniTAP / libTSI SDK Interop ===========
+    # pylint: disable=protected-access
+    def _rescan_devices(self) -> None:
+        """Refreshes libTSI's internal USB table when no handle is open."""
+        if self._dev is not None:
+            return
+        tsi_mod = getattr(
+            getattr(getattr(UniTAP, "libs", None), "lib_tsi", None),
+            "tsi",
+            None,
+        )
+        rescan_fn = getattr(tsi_mod, "TSIX_DEV_RescanDevices", None)
+        if callable(rescan_fn):
+            try:
+                rescan_fn()
+            except Exception as e:  # pylint: disable=broad-except
+                logging.debug("TSIX_DEV_RescanDevices failed: %s", e)
 
-        testers = self._tsilib.get_list_of_available_devices()
-        ret = []
-        # Output of `get_list_of_available_devices` is of the form
-        # ['0: UCD-abc [xxxxxxx]', '1: UCD-abc [yyyyyyy]']
-        # where the number between the square brackets is the device serial.
-        for tester in testers:
-            if self._device_name.upper() not in tester.upper():
-                continue
+    def _has_populated_role_list(self, dev=None) -> bool:
+        """Returns False only if the device's internal role list is []."""
+        target_dev = self._dev if dev is None else dev
+        if target_dev is None:
+            return False
+        role_list = getattr(target_dev, "_TSIDevice__role_list", None)
+        if isinstance(role_list, list) and not role_list:
+            return False
+        return True
 
-            serials = re.findall(r"\[([^]]*)\]", tester)
-            if len(serials) != 1:
-                logging.error("Serial parsing is malformed %s", tester)
-                context.set_code(grpc.StatusCode.INTERNAL)
-                context.set_details("Serial parsing is malformed")
-                raise RuntimeError("Serial parsing is malformed!")
+    def _clear_sdk_role(self, dev=None) -> None:
+        """Clears the cached role reference inside UniTAP DeviceIO."""
+        target_dev = self._dev if dev is None else dev
+        if target_dev is None:
+            return
+        try:
+            target_dev._TSIDevice__io.set_role(None)
+        except Exception as e:  # pylint: disable=broad-except
+            logging.debug("Failed to clear SDK role reference: %s", e)
 
-            ret.append(
-                video_pb2.VideoTester(
-                    id=serials[0],
-                    name=self._device_name.upper(),
-                )
+    def _get_fw_info(self) -> str:
+        """Reads the prepared firmware version from the open UCD handle."""
+        return self._dev._TSIDevice__io.get_prepared_fw_info()
+
+    def _write_device_io_reg(self, reg: int, val: int) -> None:
+        """Writes a 32-bit device-level TSI configuration item."""
+        self._dev._TSIDevice__io.set(reg, val)
+
+    def _flush_fx3(self) -> None:
+        """Flushes the Cypress FX3 USB bulk endpoints via TSI control."""
+        if self._dev is None:
+            return
+        try:
+            self._write_device_io_reg(
+                self._TSI_DEVCAP_CONTROL,
+                self._TSI_DEVCAP_FLUSH_FX3,
+            )
+        except Exception as e:  # pylint: disable=broad-except
+            logging.debug(
+                "Failed to flush FX3 status on %s: %s", self._serial, e
             )
 
-        return video_pb2.GetVideoTestersResponse(testers=ret)
+    def _reset_device_io(self) -> None:
+        """Issues an in-band NIOS/FPGA reset via TSI_DEVICE_HW_RESET."""
+        self._dev._TSIDevice__io.reset()
+
+    def _get_rx_port_io(self):
+        """Returns the underlying PortIO instance for the RX port, if any."""
+        if self._port_rx is None:
+            return None
+        port_dict = getattr(self._port_rx, "__dict__", {})
+        if "_TSIPort__io" in port_dict:
+            return self._port_rx._TSIPort__io
+        return getattr(self._port_rx, "_Port__io", None) or getattr(
+            self._port_rx, "_TSIPort__io", None
+        )
+
+    def _clear_sdk_capturer_buffers(self) -> None:
+        """Clears UniTAP's internal bulk buffer and video memory manager."""
+        if self._dev is None:
+            return
+        try:
+            self._dev._TSIDevice__capturer.clear_bulk_buffer()
+        except Exception as e:  # pylint: disable=broad-except
+            logging.debug("Failed to clear bulk buffer during reset: %s", e)
+        try:
+            self._dev._TSIDevice__memory_manager.reset()
+        except Exception as e:  # pylint: disable=broad-except
+            logging.debug(
+                "Failed to reset video memory manager during reset: %s", e
+            )
+
+    @staticmethod
+    def _get_event_capturer_buffer(event_capturer) -> list[Any] | None:
+        """Returns a copy of the pending event buffer from an EventCapturer."""
+        res = getattr(event_capturer, "_EventCapturer__result", None)
+        buf = getattr(res, "buffer", None)
+        if isinstance(buf, list):
+            return list(buf)
+        return None
+
+    @staticmethod
+    def _restore_event_capturer_buffer(
+        event_capturer, saved_events: list[Any]
+    ) -> None:
+        """Prepends previously saved events back onto an EventCapturer."""
+        res = getattr(event_capturer, "_EventCapturer__result", None)
+        buf = getattr(res, "buffer", None)
+        if isinstance(buf, list):
+            buf[:0] = saved_events
+
+    @staticmethod
+    def _update_event_capturer_fw_version(port, fw_version: str) -> None:
+        """Updates the cached ucd_fw_version string inside EventCapturer."""
+        if port is None:
+            return
+        fw_dict = getattr(port.event_capturer, "_EventCapturer__fw_info", None)
+        if isinstance(fw_dict, dict):
+            fw_dict["ucd_fw_version"] = fw_version
+
+    def _remove_from_tsilib_device_list(self, dev) -> None:
+        """Ensures a closed TSIDevice is removed from TsiLib's device list."""
+        try:
+            dev_list = getattr(self._tsilib, "_TsiLib__device_list", None)
+            if isinstance(dev_list, list) and dev in dev_list:
+                dev_list.remove(dev)
+        except Exception as e:  # pylint: disable=broad-except
+            logging.debug(
+                "Failed to remove device from TsiLib device list: %s", e
+            )
+
+    # pylint: enable=protected-access
+
+    # =========== Device Handle & Capture Lifecycle ===========
+    def _open_device(self, serial: str):
+        """Rescans libTSI USB descriptors and opens the requested UCD serial."""
+        if self._dev is not None:
+            self._close_device()
+        self._rescan_devices()
+        self._dev = self._tsilib.open(serial)
+        return self._dev
+
+    def _stop_active_capturers(self) -> None:
+        """Stops any active event or video capturers on RX and TX ports."""
+        for port in (self._port_rx, self._port_tx):
+            if port is not None:
+                for attr in ("event_capturer", "video_capturer"):
+                    try:
+                        getattr(port, attr).stop()
+                    except Exception as e:  # pylint: disable=broad-except
+                        logging.debug(
+                            "Failed to stop %s during close: %s", attr, e
+                        )
+
+    def _close_device(self) -> None:
+        """Stops active capturers and closes the current UCD handle."""
+        self._stop_active_capturers()
+        self._port_rx = None
+        self._port_tx = None
+        self._role = None
+        if self._dev is not None:
+            dev = self._dev
+            self._dev = None
+            try:
+                dev.opf_handler = None
+            except Exception as e:  # pylint: disable=broad-except
+                logging.debug("Failed to clear opf_handler before close: %s", e)
+            self._clear_sdk_role(dev)
+            try:
+                self._tsilib.close(dev)
+            except Exception as e:  # pylint: disable=broad-except
+                logging.warning(
+                    "Error closing UCD device %s (%s); clearing handle anyway.",
+                    self._serial,
+                    e,
+                )
+            self._remove_from_tsilib_device_list(dev)
+            del dev
+            gc.collect()
 
     def _reset_video_capturer_pipeline(self) -> None:
         """Force-clears the video capturer pipeline and FPGA capture state."""
@@ -160,13 +390,10 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
                 event_capturer is not None
                 and getattr(event_capturer, "status", None) == running_status
             ):
-                saved_events = None
                 try:
-                    res = getattr(
-                        event_capturer, "_EventCapturer__result", None
+                    saved_events = self._get_event_capturer_buffer(
+                        event_capturer
                     )
-                    if isinstance(getattr(res, "buffer", None), list):
-                        saved_events = list(res.buffer)
                     event_capturer.stop()
                     active_event_capturers.append(
                         (event_capturer, saved_events)
@@ -181,15 +408,7 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
         except Exception as e:  # pylint: disable=broad-except
             logging.debug("Failed to stop video_capturer during reset: %s", e)
 
-        port_dict = getattr(self._port_rx, "__dict__", {})
-        if "_TSIPort__io" in port_dict:
-            port_io = (
-                self._port_rx._TSIPort__io  # pylint: disable=protected-access
-            )
-        else:
-            port_io = getattr(self._port_rx, "_Port__io", None) or getattr(
-                self._port_rx, "_TSIPort__io", None
-            )
+        port_io = self._get_rx_port_io()
         if port_io is not None:
             for reg, val in (
                 (self._TSI_CAP_CONFIG, 0),
@@ -207,17 +426,7 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
                         e,
                     )
 
-        if self._dev is not None:
-            try:
-                self._dev._TSIDevice__capturer.clear_bulk_buffer()  # pylint: disable=protected-access
-            except Exception as e:  # pylint: disable=broad-except
-                logging.debug("Failed to clear bulk buffer during reset: %s", e)
-            try:
-                self._dev._TSIDevice__memory_manager.reset()  # pylint: disable=protected-access
-            except Exception as e:  # pylint: disable=broad-except
-                logging.debug(
-                    "Failed to reset video memory manager during reset: %s", e
-                )
+        self._clear_sdk_capturer_buffers()
 
         if (
             self._port_rx.video_capturer.status
@@ -240,11 +449,9 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
             try:
                 event_capturer.start()
                 if saved_events:
-                    res = getattr(
-                        event_capturer, "_EventCapturer__result", None
+                    self._restore_event_capturer_buffer(
+                        event_capturer, saved_events
                     )
-                    if isinstance(getattr(res, "buffer", None), list):
-                        res.buffer[:0] = saved_events
             except Exception as e:  # pylint: disable=broad-except
                 logging.debug(
                     "Failed to restart event_capturer after reset: %s", e
@@ -263,7 +470,7 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
             try:
                 self._port_rx.video_capturer.stop()
                 time.sleep(0.2)
-            except Exception as e:
+            except Exception as e:  # pylint: disable=broad-except
                 logging.debug("Non-fatal error resetting capturer: %s", e)
 
             current_status = self._port_rx.video_capturer.status
@@ -309,14 +516,42 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
                 return False
         return True
 
+    # =========== Common gRPC Methods ===========
+    @synchronized
+    @log_functionality.logger
+    def GetVideoTesters(self, _, context):
+        """Retrieves a list of available video testers."""
+        self._rescan_devices()
+        testers = self._tsilib.get_list_of_available_devices()
+        ret = []
+        # Output of `get_list_of_available_devices` is of the form
+        # ['0: UCD-abc [xxxxxxx]', '1: UCD-abc [yyyyyyy]']
+        # where the number between the square brackets is the device serial.
+        for tester in testers:
+            if self._device_name.upper() not in tester.upper():
+                continue
+
+            serials = re.findall(r"\[([^]]*)\]", tester)
+            if len(serials) != 1:
+                logging.error("Serial parsing is malformed %s", tester)
+                context.set_code(grpc.StatusCode.INTERNAL)
+                context.set_details("Serial parsing is malformed")
+                raise RuntimeError("Serial parsing is malformed!")
+
+            ret.append(
+                video_pb2.VideoTester(
+                    id=serials[0],
+                    name=self._device_name.upper(),
+                )
+            )
+
+        return video_pb2.GetVideoTestersResponse(testers=ret)
+
+    @synchronized
     @log_functionality.logger
     def SetRoleVideoTester(self, request, _):
         """Selects a specific role for a given video tester."""
-
-        if request.id != self._serial:
-            raise RuntimeError(
-                f"Serials dont match, got {request.id} expected {self._serial}"
-            )
+        self._check_serial_active(request.id)
 
         if request.role not in translate.UCD_ROLES:
             raise RuntimeError(f"Role is unknown {request.role}")
@@ -335,49 +570,7 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
 
         return video_pb2.SetRoleResponse(success=True)
 
-    def _get_fw_info(self) -> str:
-        """Reads the prepared firmware version from the open UCD handle."""
-        return (
-            self._dev._TSIDevice__io.get_prepared_fw_info()  # pylint: disable=protected-access
-        )
-
-    def _close_device(self):
-        """Stops active capturers and closes the current UCD handle."""
-        for port in (self._port_rx, self._port_tx):
-            if port is not None:
-                for attr in ("event_capturer", "video_capturer"):
-                    try:
-                        getattr(port, attr).stop()
-                    except Exception as e:  # pylint: disable=broad-except
-                        logging.debug(
-                            "Failed to stop %s during close: %s", attr, e
-                        )
-
-        self._port_rx = None
-        self._port_tx = None
-        self._role = None
-        if self._dev is not None:
-            try:
-                self._dev.opf_handler = None
-                self._dev._TSIDevice__io.set_role(  # pylint: disable=protected-access
-                    None
-                )
-            except Exception as e:  # pylint: disable=broad-except
-                logging.debug(
-                    "Failed to clear role references before close: %s", e
-                )
-            try:
-                self._tsilib.close(self._dev)
-            except Exception as e:  # pylint: disable=broad-except
-                logging.warning(
-                    "Error closing UCD device %s (%s); clearing handle anyway.",
-                    self._serial,
-                    e,
-                )
-            finally:
-                self._dev = None
-                gc.collect()
-
+    @synchronized
     @log_functionality.logger
     def OpenVideoTester(self, request, context):
         """Opens a specific video tester for interaction."""
@@ -388,33 +581,42 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
                 self._serial,
             )
             self._close_device()
+        self._serial = None
+        self._last_requested_role = None
 
         try:
-            self._dev = self._tsilib.open(request.id)
+            self._open_device(request.id)
         except Exception as e:
             context.set_code(grpc.StatusCode.INTERNAL)
-            raise RuntimeError(f"Failed to open device: {e}")
+            raise RuntimeError(f"Failed to open device: {e}") from e
 
         self._serial = request.id
 
         return video_pb2.OpenVideoTesterResponse(success=True)
 
+    @synchronized
     @log_functionality.logger
     def CloseVideoTester(self, request, _):
         """Closes an opened video tester."""
+        if self._dev is None:
+            logging.debug("Serial '%s' is already closed", request.id)
+            self._serial = None
+            self._last_requested_role = None
+            return video_pb2.CloseVideoTesterResponse(success=True)
 
-        if request.id != self._serial:
+        if request.id and self._serial and request.id != self._serial:
             raise RuntimeError(
-                f"Serials dont match, got {request.id} expected {self._serial}"
+                f"Serial '{request.id}' is not the active device"
+                f" '{self._serial}'"
             )
 
-        if self._dev is None:
-            raise RuntimeError(f"Serial {request.id} was never open")
-
         self._close_device()
+        self._serial = None
+        self._last_requested_role = None
 
         return video_pb2.CloseVideoTesterResponse(success=True)
 
+    @synchronized
     def RunComplianceTest(self, request, _):
         """Runs compliance test(s) for a given group and returns all results."""
         self._check_serial_active(request.id)
@@ -422,7 +624,7 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
         # Validate that all test groups exist so that we fail early.
         for test in request.tests:
             if test.group_id not in translate.TEST_GROUPS:
-                raise RuntimeError(f"Test group is unknown {request.group_id}")
+                raise RuntimeError(f"Test group is unknown {test.group_id}")
 
         self._role.dut_tests.clear_results()
         for test in request.tests:
@@ -462,43 +664,66 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
             results_array.append(result_obj)
             i = i + 1
 
-        # pylint: disable=R1732
-        tmp = tempfile.NamedTemporaryFile()
-        # pylint: enable=R1732
+        # make_report automatically appends .html to the filename passed to it.
+        with temp_file_path(extra_suffixes=(".html",)) as tmp_base:
+            self._role.dut_tests.make_report(tmp_base, tested_by="Passport")
+            with open(f"{tmp_base}.html", "rb") as f:
+                results_html = f.read()
 
-        # This automatically appends .html to the filename passed to it.
-        self._role.dut_tests.make_report(tmp.name, tested_by="Passport")
+        return video_pb2.RunComplianceTestResponse(
+            results=results_array, results_html=results_html
+        )
 
-        with open(f"{tmp.name}.html", "rb") as f:
-            return video_pb2.RunComplianceTestResponse(
-                results=results_array, results_html=f.read()
-            )
-
+    @synchronized
     @log_functionality.logger
     def LoadEdidVideoTester(self, request, _):
         """Loads the provided EDID data onto a given video tester."""
-
         self._check_serial_active(request.id)
 
-        # pylint: disable=R1732
-        tmp = tempfile.NamedTemporaryFile(suffix=".bin")
-        # pylint: enable=R1732
+        with temp_file_path(suffix=".bin") as tmp_path:
+            with open(tmp_path, "wb") as f:
+                f.write(request.edid)
 
-        # Open the file for writing.
-        with open(tmp.name, "wb") as f:
-            f.write(request.edid)
-
-        logging.info("Temp file name was %s", tmp.name)
-        ret = self._port_rx.edid.load_edid(
-            path=tmp.name, load_on_device=True, stream=request.id_stream
-        )
+            logging.info("Temp file name was %s", tmp_path)
+            ret = self._port_rx.edid.load_edid(
+                path=tmp_path, load_on_device=True, stream=request.id_stream
+            )
 
         return video_pb2.LoadEdidVideoTesterResponse(success=len(ret) != 0)
 
+    def _save_capture_bmp(self, result) -> bytes:
+        """Saves the first frame of a video capture result to BMP bytes.
+
+        Uses temp_file_path with deterministic finally unlink cleanup so
+        failed DSC decodes inside save_image_to_file never leak /tmp files.
+
+        Args:
+            result: UniTAP video capture result object containing frames.
+
+        Returns:
+            Raw BMP image bytes written by UniTAP.
+
+        Raises:
+            RuntimeError: If the saved BMP file is empty (0 bytes).
+        """
+        with temp_file_path(suffix=".bmp") as tmp_path:
+            logging.info("Saving image to disk")
+            result.save_image_to_file(
+                file_format=UniTAP.PictureFileFormat.BMP,
+                path=tmp_path,
+                index=0,
+            )
+            with open(tmp_path, "rb") as f:
+                screenshot_bytes = f.read()
+
+        if not screenshot_bytes:
+            raise RuntimeError("Screenshot file was written with 0 bytes")
+        return screenshot_bytes
+
     # Do not log the request as the screenshots can get very big.
+    @synchronized
     def ScreenshotVideoTester(self, request, context):
         """Captures a screenshot from a specific stream of a video tester."""
-
         logging.info(
             "Running ScreenshotVideoTester for stream %d on device %s",
             request.id_stream,
@@ -506,7 +731,7 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
         )
         self._check_serial_active(request.id)
 
-        # Validate stream index against active hardware streams if supported
+        # Validate stream index against active hardware streams if supported.
         try:
             active_streams = self._get_number_of_video_streams()
             if request.id_stream >= active_streams:
@@ -518,7 +743,7 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
                 context.set_code(grpc.StatusCode.INVALID_ARGUMENT)
                 context.set_details(msg)
                 raise ValueError(msg)
-        except (NotImplementedError, RuntimeError):
+        except RuntimeError:
             pass
 
         max_attempts = 3
@@ -548,7 +773,7 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
                     # Guarantee hardware capturer is stopped in all paths
                     try:
                         self._port_rx.video_capturer.stop()
-                    except Exception:
+                    except Exception:  # pylint: disable=broad-except
                         pass
                     self._ensure_video_capturer_idle()
 
@@ -558,18 +783,7 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
                         "Capturer completed but returned an empty frame buffer"
                     )
 
-                with tempfile.NamedTemporaryFile(suffix=".bmp") as tmp:
-                    logging.info("Saving image to disk")
-                    result.save_image_to_file(
-                        file_format=UniTAP.PictureFileFormat.BMP,
-                        path=tmp.name,
-                        index=0,
-                    )
-                    with open(tmp.name, "rb") as f:
-                        screenshot_bytes = f.read()
-
-                if not screenshot_bytes:
-                    raise RuntimeError("Screenshot file was written with 0 bytes")
+                screenshot_bytes = self._save_capture_bmp(result)
 
                 logging.info(
                     "Screenshot capture successful (%d bytes)",
@@ -579,7 +793,7 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
                     screenshot=screenshot_bytes
                 )
 
-            except Exception as e:
+            except Exception as e:  # pylint: disable=broad-except
                 logging.warning(
                     "Screenshot capture attempt %d/%d failed: %s",
                     attempt,
@@ -593,16 +807,18 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
 
         context.set_code(grpc.StatusCode.UNAVAILABLE)
         context.set_details(
-            f"Screenshot capture failed after {max_attempts} attempts: {last_error}"
+            f"Screenshot capture failed after {max_attempts} attempts:"
+            f" {last_error}"
         )
         raise RuntimeError(
-            f"Screenshot capture failed after {max_attempts} attempts: {last_error}"
+            f"Screenshot capture failed after {max_attempts} attempts:"
+            f" {last_error}"
         )
 
+    @synchronized
     @log_functionality.logger
     def GetStreamInfoVideoTester(self, request, _):
-        """Get the current advanced link parameters for a given video tester."""
-
+        """Gets the current stream parameters for a given video tester."""
         self._check_serial_active(request.id)
 
         stream_num = self._get_number_of_video_streams()
@@ -639,10 +855,10 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
 
         return video_pb2.GetStreamInfoVideoTesterResponse(streams=res)
 
+    @synchronized
     @log_functionality.logger
     def GetRolesVideoTester(self, request, _):
         """Gets the list of supported roles."""
-
         self._check_serial_active(request.id)
 
         inv_role_map = {v: k for k, v in translate.UCD_ROLES.items()}
@@ -656,60 +872,74 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
     def _force_usb_reenumeration(self, serial_number):
         """Issues a USBDEVFS_RESET ioctl directly to the device node block.
 
-        This does not require write privileges to /sys (which is often mounted read-only
-        in containers) - it only requires write access to the specific character device
-        (e.g., /dev/bus/usb/XXX/YYY) which Docker strictly permits via cgroups.
-        It drops all lingering handles, unbinds the driver, bounces the hardware,
-        and re-enumerates it in place without altering the devnum.
+        This does not require write privileges to /sys (which is often mounted
+        read-only in containers) - it only requires write access to the specific
+        character device (e.g., /dev/bus/usb/XXX/YYY) which Docker strictly
+        permits via cgroups. It drops all lingering handles, unbinds the driver,
+        bounces the hardware, and re-enumerates it in place without altering the
+        devnum.
         """
-        import fcntl
-        for sys_path in glob.glob('/sys/bus/usb/devices/*/serial'):
+        for sys_path in glob.glob("/sys/bus/usb/devices/*/serial"):
             try:
-                with open(sys_path, 'r') as f:
+                with open(sys_path, "r", encoding="utf-8") as f:
                     if f.read().strip() == serial_number:
                         dev_dir = os.path.dirname(sys_path)
-                        with open(os.path.join(dev_dir, 'busnum'), 'r') as f_bus, \
-                             open(os.path.join(dev_dir, 'devnum'), 'r') as f_dev:
+                        bus_path = os.path.join(dev_dir, "busnum")
+                        dev_num_path = os.path.join(dev_dir, "devnum")
+                        with (
+                            open(bus_path, "r", encoding="utf-8") as f_bus,
+                            open(dev_num_path, "r", encoding="utf-8") as f_dev,
+                        ):
                             busnum = int(f_bus.read().strip())
                             devnum = int(f_dev.read().strip())
 
                         dev_path = f"/dev/bus/usb/{busnum:03d}/{devnum:03d}"
-                        logging.info("Hardware resetting USB node %s for serial %s using ioctl", dev_path, serial_number)
+                        logging.info(
+                            "Hardware resetting USB node %s for serial %s"
+                            " using ioctl",
+                            dev_path,
+                            serial_number,
+                        )
 
-                        # Set up the magic USBDEVFS_RESET constant
-                        USBDEVFS_RESET = 21780
+                        usbdevfs_reset = 21780
                         fd = os.open(dev_path, os.O_WRONLY)
                         try:
-                            fcntl.ioctl(fd, USBDEVFS_RESET, 0)
+                            fcntl.ioctl(fd, usbdevfs_reset, 0)
                         finally:
                             os.close(fd)
 
-                        # Wait for the physical USB hub reset to propagate and device to boot
+                        # Wait for physical USB hub reset and device boot.
                         time.sleep(20)
                         return True
-            except (FileNotFoundError, OSError, IOError) as e:
-                logging.debug("Transient error opening USB ioctl path for %s: %s", sys_path, e)
+            except OSError as e:
+                logging.debug(
+                    "Transient error opening USB ioctl path for %s: %s",
+                    sys_path,
+                    e,
+                )
 
-        logging.warning("Failed to locate/reset USB device node for serial %s", serial_number)
+        logging.warning(
+            "Failed to locate/reset USB device node for serial %s",
+            serial_number,
+        )
         return False
 
+    @synchronized
     def PowerCycle(self, request, context):
-        """Power cycle the video tester."""
+        """Power cycles the video tester."""
+        del context
         logging.info("PowerCycling UCD %s", request.id)
 
         try:
             logging.info("Attempting SDK-level reset for UCD %s", request.id)
-            self._dev._TSIDevice__io.reset()  # pylint: disable=protected-access
-            # We need to sleep while the reset is taking place, the expected time
-            # for this operation is 20 seconds, we sleep 30 to have some leeway.
+            self._reset_device_io()
             time.sleep(constants.UCD_HW_RESET_TIMEOUT_S)
-        except Exception:
-            logging.exception("Clean SDK reset failed; continuing to forced bounce")
+        except Exception:  # pylint: disable=broad-except
+            logging.exception(
+                "Clean SDK reset failed; continuing to forced bounce"
+            )
 
-        try:
-            self._dev.close()
-        except Exception:
-            logging.exception("Failed graceful SDK close; tearing down anyway")
+        self._close_device()
 
         # Bruteforce hardware re-enumeration to clear any dead handles
         self._force_usb_reenumeration(request.id)
@@ -719,18 +949,30 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
         base_delay_s = 2
 
         for attempt in range(max_retries):
-            # Wait for kernel bind payload to surface on libusb
-            delay = base_delay_s * (2 ** attempt)
+            delay = base_delay_s * (2**attempt)
             time.sleep(delay)
             try:
-                self._dev = self._tsilib.open(request.id)
-                logging.info("Successfully reconnected to UCD %s on attempt %d", request.id, attempt + 1)
+                self._open_device(request.id)
+                logging.info(
+                    "Successfully reconnected to UCD %s on attempt %d",
+                    request.id,
+                    attempt + 1,
+                )
                 break
-            except Exception as e:
+            except Exception as e:  # pylint: disable=broad-except
                 if attempt == max_retries - 1:
-                    logging.exception("Failed all retry attempts to resurrect UCD %s", request.id)
-                    raise RuntimeError(f"UCD {request.id} failed to return after USB bounce") from e
-                logging.warning("Reconnection attempt %d failed, retrying in %ds...", attempt + 1, base_delay_s * (2 ** (attempt + 1)))
+                    logging.exception(
+                        "Failed all retry attempts to resurrect UCD %s",
+                        request.id,
+                    )
+                    raise RuntimeError(
+                        f"UCD {request.id} failed to return after USB bounce"
+                    ) from e
+                logging.warning(
+                    "Reconnection attempt %d failed, retrying in %ds...",
+                    attempt + 1,
+                    base_delay_s * (2 ** (attempt + 1)),
+                )
 
         if self._last_requested_role:
             self._role_set_quirks(self._last_requested_role)

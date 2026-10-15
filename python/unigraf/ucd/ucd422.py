@@ -2,7 +2,7 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-"""Provides a gRPC server to control Unigraf video testing hardware.
+"""Provides a gRPC server to control Unigraf UCD-422 video testing hardware.
 
 This module implements the VideoTesterService gRPC service, allowing clients
 to discover, open, close, and configure Unigraf UCD-422 series video testers
@@ -27,7 +27,7 @@ from utils import log_functionality
 
 
 class Ucd422Server(server.UcdServer):
-    """Implements the gRPC service for controlling Unigraf video testers.
+    """Implements the gRPC service for Unigraf UCD-422 video testers.
 
     This class provides methods to discover, open, close, and configure
     Unigraf UCD-422 series video testing devices. It uses the UniTAP library
@@ -38,6 +38,7 @@ class Ucd422Server(server.UcdServer):
     def __init__(self):
         super().__init__("UCD-422")
 
+    @server.synchronized
     @log_functionality.logger
     def SetLinkVideoTester(self, request, context):
         """Sets advanced link parameters for a given video tester."""
@@ -75,10 +76,10 @@ class Ucd422Server(server.UcdServer):
 
         return video_pb2.SetLinkVideoTesterResponse()
 
+    @server.synchronized
     @log_functionality.logger
     def GetLinkVideoTester(self, request, context):
-        """Get the current advanced link parameters for a given video tester."""
-
+        """Gets the current advanced link parameters for a video tester."""
         self._check_serial_active(request.id)
 
         logging.info("GetLinkVideoTester")
@@ -109,15 +110,17 @@ class Ucd422Server(server.UcdServer):
         # lanes.
         return link_info
 
+    @server.synchronized
     @log_functionality.logger
     def AttachVideoTester(self, request, context):
-        """Simulate attaching or detaching a display or sink on a video tester."""
+        """Simulates attaching or detaching a display or sink."""
         self._check_serial_active(request.id)
 
         self._port_rx.link.status.set_assert_state(request.attach)
 
         return video_pb2.AttachVideoTesterResponse()
 
+    @server.synchronized
     @log_functionality.logger
     def HpdPulseVideoTester(self, request, context):
         """Sends an HPD (Hot Plug Detect) pulse to a video tester."""
@@ -129,18 +132,19 @@ class Ucd422Server(server.UcdServer):
 
         return video_pb2.HpdPulseVideoTesterResponse()
 
+    @server.synchronized
     @log_functionality.logger
     def StartEventCapture(self, request, context):
-        """Start the event capture with the specified filters"""
-
+        """Starts the event capture with the specified filters."""
+        self._check_serial_active(request.id)
         logging.info("NoOp StartEventCapture")
-
         return video_pb2.StartEventCaptureResponse()
 
+    @server.synchronized
     @log_functionality.logger
     def StopEventCapture(self, request, context):
-        """Stop the event capture and optionally get the capture files."""
-
+        """Stops the event capture and optionally gets the capture files."""
+        self._check_serial_active(request.id)
         logging.info("NoOp StopEventCapture")
         return video_pb2.StopEventCaptureResponse()
 
