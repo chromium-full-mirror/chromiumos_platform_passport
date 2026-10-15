@@ -148,7 +148,15 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
     _TSI_CAP_CMD_STOP = 2
     _TSI_CAP_CONFIG = 0x302
     _TSI_USBC_FLUSH_BULK_PIPES_W = 0x5002C004
+    _ROLE_SELECT_RETRIES = 2
+    _SCREENSHOT_MAX_ATTEMPTS = 3
+    _SCREENSHOT_LATCH_DELAY_SEC = 0.5
+    _SCREENSHOT_RETRY_DELAY_SEC = 1.0
     _LOCK_TIMEOUT_SEC = _DEFAULT_LOCK_TIMEOUT_SEC
+    _HW_RESET_INITIAL_WAIT_SEC = constants.UCD_HW_RESET_TIMEOUT_S
+    _USB_REENUMERATION_SETTLE_SEC = 2.0
+    _POWER_CYCLE_POLL_INTERVAL_SEC = 2.0
+    _POWER_CYCLE_MAX_POLL_ATTEMPTS = 10
 
     @log_functionality.logger
     def __init__(self, device_name):
@@ -483,6 +491,7 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
                     f"Video capturer is not idle (status: {current_status})"
                 )
 
+    # =========== Firmware Validation & Role Recovery Engine ===========
     def _get_active_fw_components(self, role=None) -> list[str]:
         """Returns the firmware component names active for the given role."""
         target_role = self._role if role is None else role
@@ -497,6 +506,8 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
         self, fw_info: str, role=None
     ) -> list[str]:
         """Returns active firmware components reporting 0.0.0 (or EMPTY)."""
+        if not isinstance(fw_info, str):
+            return []
         if not fw_info:
             return ["EMPTY"]
         corrupted = []
@@ -507,6 +518,8 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
 
     def _is_benign_ux_only_corruption(self, fw_info: str, role=None) -> bool:
         """Checks if only UX is 0.0.0 while UF and active PD are healthy."""
+        if not isinstance(fw_info, str):
+            return False
         if self._get_corrupted_fw_components(fw_info, role) != ["UX"]:
             return False
         for comp in self._get_active_fw_components(role):
@@ -516,12 +529,395 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
                 return False
         return True
 
-    # =========== Common gRPC Methods ===========
-    @synchronized
+    def _recover_corrupted_fw_in_place(
+        self, fw_info: str, corrupted: list[str]
+    ) -> tuple[str, list[str]]:
+        """Attempts in-place recovery of corrupted PD or FX3 firmware state."""
+        if "UF" not in corrupted and "EMPTY" not in corrupted:
+            pd_controllers = (
+                ("PDRX", "pdcrx", "RX"),
+                ("PDTX", "pdctx", "TX"),
+            )
+            reset_attempted = False
+            for comp, attr, label in pd_controllers:
+                if comp in corrupted and hasattr(self._role, attr):
+                    reset_attempted = True
+                    logging.warning(
+                        "UCD %s reported %s: 0.0.0 (%s); resetting %s PD"
+                        " controller in place.",
+                        self._serial,
+                        comp,
+                        fw_info,
+                        label,
+                    )
+                    try:
+                        getattr(self._role, attr).controls.reset()
+                        time.sleep(1.0)
+                    except Exception as e:  # pylint: disable=broad-except
+                        logging.debug(
+                            "Failed to reset %s on %s: %s",
+                            attr,
+                            self._serial,
+                            e,
+                        )
+            if reset_attempted:
+                fw_info = self._get_fw_info()
+                corrupted = self._get_corrupted_fw_components(
+                    fw_info, self._role
+                )
+
+        if "UX" in corrupted:
+            self._flush_fx3()
+
+        return fw_info, corrupted
+
+    @staticmethod
+    def _resolve_usb_dev_dir(sys_path: str) -> str:
+        """Normalizes a sysfs USB file or directory path to its device dir."""
+        if os.path.basename(sys_path) in ("serial", "idVendor", "product"):
+            return os.path.dirname(sys_path)
+        return sys_path
+
+    def _reset_usb_dev_dir(
+        self, dev_dir: str, label: str, settle_delay_sec: float
+    ) -> bool:
+        """Resets a sysfs USB device directory via ioctl or authorized sysfs."""
+        bus_path = os.path.join(dev_dir, "busnum")
+        dev_num_path = os.path.join(dev_dir, "devnum")
+        try:
+            with (
+                open(bus_path, "r", encoding="utf-8") as f_bus,
+                open(dev_num_path, "r", encoding="utf-8") as f_dev,
+            ):
+                busnum = int(f_bus.read().strip())
+                devnum = int(f_dev.read().strip())
+
+            dev_path = f"/dev/bus/usb/{busnum:03d}/{devnum:03d}"
+            logging.info(
+                "Hardware resetting USB node %s for %s using ioctl",
+                dev_path,
+                label,
+            )
+
+            usbdevfs_reset = 21780
+            fd = os.open(dev_path, os.O_WRONLY)
+            try:
+                fcntl.ioctl(fd, usbdevfs_reset, 0)
+            finally:
+                os.close(fd)
+
+            if settle_delay_sec > 0:
+                time.sleep(settle_delay_sec)
+            return True
+        except (OSError, ValueError) as e:
+            logging.debug(
+                "Transient error opening USB ioctl path for %s: %s",
+                dev_dir,
+                e,
+            )
+            auth_path = os.path.join(dev_dir, "authorized")
+            try:
+                with open(auth_path, "w", encoding="utf-8") as f_auth:
+                    f_auth.write("0")
+                time.sleep(0.5)
+                with open(auth_path, "w", encoding="utf-8") as f_auth:
+                    f_auth.write("1")
+                if settle_delay_sec > 0:
+                    time.sleep(settle_delay_sec)
+                return True
+            except OSError as auth_err:
+                logging.debug(
+                    "Fallback sysfs authorized toggle failed for %s: %s",
+                    dev_dir,
+                    auth_err,
+                )
+        return False
+
     @log_functionality.logger
-    def GetVideoTesters(self, _, context):
-        """Retrieves a list of available video testers."""
-        self._rescan_devices()
+    def _force_usb_reenumeration(
+        self,
+        serial_number: str | None = None,
+        settle_delay_sec: float | None = None,
+    ) -> bool:
+        """Issues a USBDEVFS_RESET ioctl directly to the device node block.
+
+        This does not require write privileges to /sys (which is often mounted
+        read-only in containers) - it only requires write access to the specific
+        character device (e.g., /dev/bus/usb/XXX/YYY) which Docker strictly
+        permits via cgroups. It drops all lingering handles, unbinds the driver,
+        bounces the hardware, and re-enumerates it in place without altering the
+        devnum.
+
+        Args:
+            serial_number: Optional UCD serial number to match in sysfs.
+            settle_delay_sec: Optional post-reset settle delay in seconds.
+
+        Returns:
+            True if a matching USB device node was reset, False otherwise.
+        """
+        if settle_delay_sec is None:
+            settle_delay_sec = self._USB_REENUMERATION_SETTLE_SEC
+
+        attempted_dirs: set[str] = set()
+        if serial_number:
+            for sys_path in glob.glob("/sys/bus/usb/devices/*/serial"):
+                try:
+                    dev_dir = self._resolve_usb_dev_dir(sys_path)
+                    serial_path = os.path.join(dev_dir, "serial")
+                    with open(serial_path, "r", encoding="utf-8") as f:
+                        if f.read().strip() != serial_number:
+                            continue
+                    vendor_path = os.path.join(dev_dir, "idVendor")
+                    try:
+                        with open(vendor_path, "r", encoding="utf-8") as f_ven:
+                            if f_ven.read().strip().lower() != "1992":
+                                continue
+                    except OSError:
+                        pass
+
+                    attempted_dirs.add(dev_dir)
+                    if self._reset_usb_dev_dir(
+                        dev_dir, f"serial {serial_number}", settle_delay_sec
+                    ):
+                        return True
+                except OSError as e:
+                    logging.debug(
+                        "Transient error reading sysfs serial %s: %s",
+                        sys_path,
+                        e,
+                    )
+
+        target_model = self._device_name.replace("-", "").lower()
+        for sys_path in glob.glob("/sys/bus/usb/devices/*/idVendor"):
+            try:
+                dev_dir = self._resolve_usb_dev_dir(sys_path)
+                if dev_dir in attempted_dirs:
+                    continue
+                vendor_path = os.path.join(dev_dir, "idVendor")
+                with open(vendor_path, "r", encoding="utf-8") as f_ven:
+                    if f_ven.read().strip().lower() != "1992":
+                        continue
+
+                if serial_number:
+                    serial_path = os.path.join(dev_dir, "serial")
+                    try:
+                        with open(serial_path, "r", encoding="utf-8") as f_ser:
+                            dev_serial = f_ser.read().strip()
+                        if dev_serial and dev_serial != serial_number:
+                            continue
+                    except OSError:
+                        pass
+
+                product_path = os.path.join(dev_dir, "product")
+                product = ""
+                try:
+                    with open(product_path, "r", encoding="utf-8") as f_prod:
+                        product = f_prod.read().strip()
+                except OSError:
+                    pass
+
+                if product:
+                    if target_model not in product.replace("-", "").lower():
+                        continue
+                elif not serial_number:
+                    continue
+
+                attempted_dirs.add(dev_dir)
+                if self._reset_usb_dev_dir(
+                    dev_dir, f"Unigraf {self._device_name}", settle_delay_sec
+                ):
+                    return True
+            except OSError as e:
+                logging.debug(
+                    "Transient error reading sysfs idVendor %s: %s",
+                    sys_path,
+                    e,
+                )
+
+        if serial_number:
+            logging.warning(
+                "Failed to locate/reset USB device node for serial %s",
+                serial_number,
+            )
+        else:
+            logging.debug(
+                "No matching %s USB device node found to reset",
+                self._device_name,
+            )
+        return False
+
+    def _hard_reset_and_reopen(self, serial: str) -> None:
+        """Executes in-band NIOS reset, bounces USB, and polls until reopen."""
+        if self._dev is not None:
+            try:
+                logging.info(
+                    "Attempting SDK-level hardware reset for UCD %s", serial
+                )
+                self._reset_device_io()
+                # Always wait after TSI_DEVICE_HW_RESET before issuing
+                # USBDEVFS_RESET so we never interrupt FPGA reconfiguration.
+                time.sleep(self._HW_RESET_INITIAL_WAIT_SEC)
+            except Exception as e:  # pylint: disable=broad-except
+                logging.warning(
+                    "Clean SDK reset failed on %s (%s); continuing to USB"
+                    " bounce",
+                    serial,
+                    e,
+                )
+        self._close_device()
+        self._force_usb_reenumeration(serial)
+        self._reopen_after_reset(serial)
+
+    def _reopen_after_reset(
+        self,
+        serial_number: str,
+        max_attempts: int | None = None,
+        poll_interval_sec: float | None = None,
+    ) -> None:
+        """Polls libTSI rescan + open until the UCD is ready with roles."""
+        if max_attempts is None:
+            max_attempts = self._POWER_CYCLE_MAX_POLL_ATTEMPTS
+        if poll_interval_sec is None:
+            poll_interval_sec = self._POWER_CYCLE_POLL_INTERVAL_SEC
+
+        last_err = None
+        for attempt in range(max_attempts):
+            if poll_interval_sec > 0:
+                time.sleep(poll_interval_sec)
+            try:
+                self._open_device(serial_number)
+                if not self._has_populated_role_list():
+                    self._close_device()
+                    raise RuntimeError(
+                        f"UCD {serial_number} opened with empty role list"
+                        " while booting"
+                    )
+                logging.info(
+                    "Successfully reconnected to UCD %s on poll attempt %d/%d",
+                    serial_number,
+                    attempt + 1,
+                    max_attempts,
+                )
+                return
+            except Exception as e:  # pylint: disable=broad-except
+                last_err = e
+                self._close_device()
+                logging.warning(
+                    "Reconnection poll %d/%d for UCD %s not ready (%s)...",
+                    attempt + 1,
+                    max_attempts,
+                    serial_number,
+                    e,
+                )
+
+        logging.error(
+            "Failed all %d poll attempts to resurrect UCD %s: %s",
+            max_attempts,
+            serial_number,
+            last_err,
+        )
+        raise RuntimeError(
+            f"UCD {serial_number} failed to return after USB bounce"
+        ) from last_err
+
+    def _select_role(self, role_to_set):
+        """Selects the UCD role using a 3-tier recovery state machine.
+
+        Attempt 1: Fast path (in-place PD/FX3 recovery).
+        Attempt 2: Soft recovery (FX3 flush, close, libTSI rescan, reopen).
+        Attempt 3: Hard recovery (NIOS reset, close, USBDEVFS_RESET, rescan,
+                   and polled reopen until roles are populated).
+
+        Args:
+            role_to_set: The UniTAP role class to select on the open device.
+
+        Raises:
+            Exception: If role selection fails across all recovery tiers.
+        """
+        for attempt in range(self._ROLE_SELECT_RETRIES + 1):
+            last_ux_only_benign = False
+            try:
+                if self._role is not None:
+                    # Unigraf's C++ libTSI.so aborts via std::terminate() if
+                    # TSIX_DEV_SelectRole is called a second time on the same
+                    # TSI_HANDLE, so we must close and reopen a fresh handle.
+                    self._close_device()
+                if self._dev is None:
+                    self._open_device(self._serial)
+
+                if not self._has_populated_role_list():
+                    raise UniTAP.dev.device.NotExistingRoleSelected(
+                        f"UCD {self._serial} has empty role list (firmware"
+                        " still booting)"
+                    )
+
+                self._role = self._dev.select_role(role_to_set)
+                fw_info = self._get_fw_info()
+                corrupted = self._get_corrupted_fw_components(
+                    fw_info, self._role
+                )
+                if corrupted:
+                    fw_info, corrupted = self._recover_corrupted_fw_in_place(
+                        fw_info, corrupted
+                    )
+
+                if corrupted:
+                    last_ux_only_benign = self._is_benign_ux_only_corruption(
+                        fw_info, self._role
+                    )
+                    if (
+                        attempt == self._ROLE_SELECT_RETRIES
+                        and last_ux_only_benign
+                    ):
+                        logging.warning(
+                            "Proceeding despite UX: 0.0.0 after %d attempts"
+                            " because FPGA and PD firmware are healthy: %s",
+                            self._ROLE_SELECT_RETRIES + 1,
+                            fw_info,
+                        )
+                        return
+                    raise RuntimeError(
+                        f"Corrupted UCD firmware version detected: {fw_info}"
+                    )
+                return
+            except Exception as e:  # pylint: disable=broad-except
+                if attempt == self._ROLE_SELECT_RETRIES:
+                    raise
+                if attempt == 0 or last_ux_only_benign:
+                    logging.warning(
+                        "UCD role selection attempt %d/%d failed (%s);"
+                        " reopening device %s (Tier 2 soft recovery).",
+                        attempt + 1,
+                        self._ROLE_SELECT_RETRIES + 1,
+                        e,
+                        self._serial,
+                    )
+                    if self._dev is not None and not last_ux_only_benign:
+                        self._flush_fx3()
+                    self._close_device()
+                else:
+                    logging.warning(
+                        "UCD role selection attempt %d/%d failed (%s);"
+                        " escalating to NIOS reset and USB bounce on %s"
+                        " (Tier 3 hard recovery).",
+                        attempt + 1,
+                        self._ROLE_SELECT_RETRIES + 1,
+                        e,
+                        self._serial,
+                    )
+                    self._hard_reset_and_reopen(self._serial)
+
+    def _activate_role(self, role_to_set) -> None:
+        """Selects the role with device quirks and verifies capturer."""
+        self._last_requested_role = role_to_set
+        self._role_set_quirks(role_to_set)
+        self._ensure_video_capturer_idle()
+
+    # =========== Common gRPC Methods ===========
+    def _scan_matching_testers(
+        self, context=None
+    ) -> list[video_pb2.VideoTester]:
+        """Scans libTSI available devices and returns matching VideoTesters."""
         testers = self._tsilib.get_list_of_available_devices()
         ret = []
         # Output of `get_list_of_available_devices` is of the form
@@ -534,8 +930,9 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
             serials = re.findall(r"\[([^]]*)\]", tester)
             if len(serials) != 1:
                 logging.error("Serial parsing is malformed %s", tester)
-                context.set_code(grpc.StatusCode.INTERNAL)
-                context.set_details("Serial parsing is malformed")
+                if context is not None:
+                    context.set_code(grpc.StatusCode.INTERNAL)
+                    context.set_details("Serial parsing is malformed")
                 raise RuntimeError("Serial parsing is malformed!")
 
             ret.append(
@@ -545,7 +942,27 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
                 )
             )
 
-        return video_pb2.GetVideoTestersResponse(testers=ret)
+        return ret
+
+    @synchronized
+    @log_functionality.logger
+    def GetVideoTesters(self, _, context):
+        """Retrieves a list of available video testers."""
+        if self._dev is None:
+            self._rescan_devices()
+        testers = self._scan_matching_testers(context)
+        if (
+            self._dev is not None
+            and self._serial
+            and all(t.id != self._serial for t in testers)
+        ):
+            testers.append(
+                video_pb2.VideoTester(
+                    id=self._serial,
+                    name=self._device_name.upper(),
+                )
+            )
+        return video_pb2.GetVideoTestersResponse(testers=testers)
 
     @synchronized
     @log_functionality.logger
@@ -556,18 +973,7 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
         if request.role not in translate.UCD_ROLES:
             raise RuntimeError(f"Role is unknown {request.role}")
 
-        self._last_requested_role = translate.UCD_ROLES[request.role]
-        self._role_set_quirks(self._last_requested_role)
-        self._ensure_video_capturer_idle()
-        fw_info = self._get_fw_info()
-        corrupted = self._get_corrupted_fw_components(fw_info, self._role)
-        if corrupted and not self._is_benign_ux_only_corruption(
-            fw_info, self._role
-        ):
-            raise RuntimeError(
-                f"Corrupted UCD firmware version detected: {fw_info}"
-            )
-
+        self._activate_role(translate.UCD_ROLES[request.role])
         return video_pb2.SetRoleResponse(success=True)
 
     @synchronized
@@ -585,7 +991,20 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
         self._last_requested_role = None
 
         try:
-            self._open_device(request.id)
+            try:
+                self._open_device(request.id)
+                if not self._has_populated_role_list():
+                    raise RuntimeError(
+                        f"UCD {request.id} opened with empty role list"
+                    )
+            except Exception as first_err:  # pylint: disable=broad-except
+                logging.warning(
+                    "Initial OpenVideoTester('%s') failed or returned empty"
+                    " role list (%s); running hard reset and reopen.",
+                    request.id,
+                    first_err,
+                )
+                self._hard_reset_and_reopen(request.id)
         except Exception as e:
             context.set_code(grpc.StatusCode.INTERNAL)
             raise RuntimeError(f"Failed to open device: {e}") from e
@@ -746,14 +1165,19 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
         except RuntimeError:
             pass
 
-        max_attempts = 3
-        frame_latch_delay_sec = 0.5
+        max_attempts = self._SCREENSHOT_MAX_ATTEMPTS
+        frame_latch_delay_sec = self._SCREENSHOT_LATCH_DELAY_SEC
+        retry_delay_sec = self._SCREENSHOT_RETRY_DELAY_SEC
         last_error = None
 
         for attempt in range(1, max_attempts + 1):
             try:
-                # Reset any stuck capturer state from previous runs
-                self._ensure_video_capturer_idle()
+                if (
+                    attempt == 1
+                    or self._port_rx.video_capturer.status
+                    != UniTAP.VideoCaptureStatus.Idle
+                ):
+                    self._ensure_video_capturer_idle()
 
                 logging.info(
                     "Start live video capture (attempt %d/%d)",
@@ -761,7 +1185,7 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
                     max_attempts,
                 )
 
-                # Asynchronous live capture with hardware latch window
+                # Asynchronous live capture with hardware latch window.
                 try:
                     self._port_rx.video_capturer.start(
                         frames_count=0,
@@ -770,7 +1194,7 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
                     time.sleep(frame_latch_delay_sec)
                     self._port_rx.video_capturer.pop_element()
                 finally:
-                    # Guarantee hardware capturer is stopped in all paths
+                    # Guarantee hardware capturer is stopped in all paths.
                     try:
                         self._port_rx.video_capturer.stop()
                     except Exception:  # pylint: disable=broad-except
@@ -802,8 +1226,12 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
                 )
                 last_error = e
                 if attempt < max_attempts:
-                    self._reset_video_capturer_pipeline()
-                    time.sleep(0.5)
+                    if (
+                        self._port_rx.video_capturer.status
+                        == UniTAP.VideoCaptureStatus.Idle
+                    ):
+                        self._reset_video_capturer_pipeline()
+                    time.sleep(retry_delay_sec)
 
         context.set_code(grpc.StatusCode.UNAVAILABLE)
         context.set_details(
@@ -868,114 +1296,36 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
 
         return video_pb2.GetRolesResponse(roles=ret)
 
-    @log_functionality.logger
-    def _force_usb_reenumeration(self, serial_number):
-        """Issues a USBDEVFS_RESET ioctl directly to the device node block.
-
-        This does not require write privileges to /sys (which is often mounted
-        read-only in containers) - it only requires write access to the specific
-        character device (e.g., /dev/bus/usb/XXX/YYY) which Docker strictly
-        permits via cgroups. It drops all lingering handles, unbinds the driver,
-        bounces the hardware, and re-enumerates it in place without altering the
-        devnum.
-        """
-        for sys_path in glob.glob("/sys/bus/usb/devices/*/serial"):
-            try:
-                with open(sys_path, "r", encoding="utf-8") as f:
-                    if f.read().strip() == serial_number:
-                        dev_dir = os.path.dirname(sys_path)
-                        bus_path = os.path.join(dev_dir, "busnum")
-                        dev_num_path = os.path.join(dev_dir, "devnum")
-                        with (
-                            open(bus_path, "r", encoding="utf-8") as f_bus,
-                            open(dev_num_path, "r", encoding="utf-8") as f_dev,
-                        ):
-                            busnum = int(f_bus.read().strip())
-                            devnum = int(f_dev.read().strip())
-
-                        dev_path = f"/dev/bus/usb/{busnum:03d}/{devnum:03d}"
-                        logging.info(
-                            "Hardware resetting USB node %s for serial %s"
-                            " using ioctl",
-                            dev_path,
-                            serial_number,
-                        )
-
-                        usbdevfs_reset = 21780
-                        fd = os.open(dev_path, os.O_WRONLY)
-                        try:
-                            fcntl.ioctl(fd, usbdevfs_reset, 0)
-                        finally:
-                            os.close(fd)
-
-                        # Wait for physical USB hub reset and device boot.
-                        time.sleep(20)
-                        return True
-            except OSError as e:
-                logging.debug(
-                    "Transient error opening USB ioctl path for %s: %s",
-                    sys_path,
-                    e,
-                )
-
-        logging.warning(
-            "Failed to locate/reset USB device node for serial %s",
-            serial_number,
-        )
-        return False
-
     @synchronized
     def PowerCycle(self, request, context):
-        """Power cycles the video tester."""
+        """Power cycles the video tester and restores its active role."""
         del context
-        logging.info("PowerCycling UCD %s", request.id)
-
-        try:
-            logging.info("Attempting SDK-level reset for UCD %s", request.id)
-            self._reset_device_io()
-            time.sleep(constants.UCD_HW_RESET_TIMEOUT_S)
-        except Exception:  # pylint: disable=broad-except
-            logging.exception(
-                "Clean SDK reset failed; continuing to forced bounce"
+        request_id = getattr(request, "id", None)
+        if request_id and self._serial and request_id != self._serial:
+            raise RuntimeError(
+                f"Serial '{request_id}' is not the active device"
+                f" '{self._serial}'"
             )
+        target_serial = request_id or self._serial
+        if not target_serial:
+            raise RuntimeError("Tester serial id is required for PowerCycle")
 
-        self._close_device()
+        was_open = self._dev is not None
+        saved_role = self._last_requested_role
+        if saved_role is None and self._role is not None:
+            saved_role = self._role.__class__
 
-        # Bruteforce hardware re-enumeration to clear any dead handles
-        self._force_usb_reenumeration(request.id)
+        logging.info("PowerCycling UCD %s", target_serial)
 
-        # Reconnect with exponential backoff to allow udev and libusb to settle
-        max_retries = 5
-        base_delay_s = 2
-
-        for attempt in range(max_retries):
-            delay = base_delay_s * (2**attempt)
-            time.sleep(delay)
-            try:
-                self._open_device(request.id)
-                logging.info(
-                    "Successfully reconnected to UCD %s on attempt %d",
-                    request.id,
-                    attempt + 1,
-                )
-                break
-            except Exception as e:  # pylint: disable=broad-except
-                if attempt == max_retries - 1:
-                    logging.exception(
-                        "Failed all retry attempts to resurrect UCD %s",
-                        request.id,
-                    )
-                    raise RuntimeError(
-                        f"UCD {request.id} failed to return after USB bounce"
-                    ) from e
-                logging.warning(
-                    "Reconnection attempt %d failed, retrying in %ds...",
-                    attempt + 1,
-                    base_delay_s * (2 ** (attempt + 1)),
-                )
-
-        if self._last_requested_role:
-            self._role_set_quirks(self._last_requested_role)
+        self._serial = None
+        self._last_requested_role = None
+        self._hard_reset_and_reopen(target_serial)
+        if was_open:
+            self._serial = target_serial
+            if saved_role is not None:
+                self._activate_role(saved_role)
+        else:
+            self._close_device()
 
         return video_pb2.PowerCycleResponse()
 

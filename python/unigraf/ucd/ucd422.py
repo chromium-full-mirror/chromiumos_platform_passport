@@ -149,7 +149,7 @@ class Ucd422Server(server.UcdServer):
         return video_pb2.StopEventCaptureResponse()
 
     def _role_set_quirks(self, role_to_set):
-        self._role = self._dev.select_role(role_to_set)
+        self._select_role(role_to_set)
         logging.info("Role was selected successfully.")
         self._port_rx = self._role.hdrx
 

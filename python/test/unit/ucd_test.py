@@ -13,6 +13,7 @@ import threading
 import types
 import unittest
 from unittest import mock
+import weakref
 
 
 os.environ.setdefault("PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION", "python")
@@ -191,7 +192,7 @@ class TestUcd500Server(unittest.TestCase):
         )
         with (
             mock.patch("ucd.ucd500.UniTAP.OpfHandlerInternal"),
-            mock.patch("ucd.ucd500.time.sleep"),
+            mock.patch("ucd.server.time.sleep"),
         ):
             self.server.SetRoleVideoTester(
                 video_pb2.SetRoleRequest(
@@ -297,7 +298,7 @@ class TestUcd500Server(unittest.TestCase):
 
         with (
             mock.patch("ucd.ucd500.UniTAP.OpfHandlerInternal"),
-            mock.patch("ucd.ucd500.time.sleep"),
+            mock.patch("ucd.server.time.sleep"),
             self.assertRaises(RuntimeError) as ctx,
         ):
             self.server.SetRoleVideoTester(
@@ -327,7 +328,6 @@ class TestUcd500Server(unittest.TestCase):
 
         with (
             mock.patch("ucd.ucd500.UniTAP.OpfHandlerInternal"),
-            mock.patch("ucd.ucd500.time.sleep"),
             self.assertRaises(RuntimeError) as ctx,
         ):
             self.server.SetRoleVideoTester(
@@ -377,12 +377,11 @@ class TestUcd500Server(unittest.TestCase):
         self.mock_io.get_prepared_fw_info.side_effect = [
             stalled_fw,
             HEALTHY_FW_INFO,
-            HEALTHY_FW_INFO,
         ]
 
         with (
             mock.patch("ucd.ucd500.UniTAP.OpfHandlerInternal"),
-            mock.patch("ucd.ucd500.time.sleep"),
+            mock.patch("ucd.server.time.sleep"),
         ):
             reply = self.server.SetRoleVideoTester(
                 video_pb2.SetRoleRequest(
@@ -410,7 +409,7 @@ class TestUcd500Server(unittest.TestCase):
 
         with (
             mock.patch("ucd.ucd500.UniTAP.OpfHandlerInternal"),
-            mock.patch("ucd.ucd500.time.sleep"),
+            mock.patch("ucd.server.time.sleep"),
         ):
             reply = self.server.SetRoleVideoTester(
                 video_pb2.SetRoleRequest(
@@ -445,12 +444,11 @@ class TestUcd500Server(unittest.TestCase):
         self.mock_io.get_prepared_fw_info.side_effect = [
             stalled_fw,
             HEALTHY_FW_INFO,
-            HEALTHY_FW_INFO,
         ]
 
         with (
             mock.patch("ucd.ucd500.UniTAP.OpfHandlerInternal"),
-            mock.patch("ucd.ucd500.time.sleep"),
+            mock.patch("ucd.server.time.sleep"),
         ):
             reply = self.server.SetRoleVideoTester(
                 video_pb2.SetRoleRequest(
@@ -482,7 +480,7 @@ class TestUcd500Server(unittest.TestCase):
 
         with (
             mock.patch("ucd.ucd500.UniTAP.OpfHandlerInternal"),
-            mock.patch("ucd.ucd500.time.sleep"),
+            mock.patch("ucd.server.time.sleep"),
         ):
             reply = self.server.SetRoleVideoTester(
                 video_pb2.SetRoleRequest(
@@ -712,12 +710,11 @@ class TestUcd500Server(unittest.TestCase):
         self.mock_io.get_prepared_fw_info.side_effect = [
             WEDGED_PD_FW_INFO,
             HEALTHY_FW_INFO,
-            HEALTHY_FW_INFO,
         ]
 
         with (
             mock.patch("ucd.ucd500.UniTAP.OpfHandlerInternal"),
-            mock.patch("ucd.ucd500.time.sleep"),
+            mock.patch("ucd.server.time.sleep"),
         ):
             reply = self.server.SetRoleVideoTester(
                 video_pb2.SetRoleRequest(
@@ -743,12 +740,11 @@ class TestUcd500Server(unittest.TestCase):
             WEDGED_PD_FW_INFO,
             WEDGED_PD_FW_INFO,
             HEALTHY_FW_INFO,
-            HEALTHY_FW_INFO,
         ]
 
         with (
             mock.patch("ucd.ucd500.UniTAP.OpfHandlerInternal"),
-            mock.patch("ucd.ucd500.time.sleep"),
+            mock.patch("ucd.server.time.sleep"),
         ):
             reply = self.server.SetRoleVideoTester(
                 video_pb2.SetRoleRequest(
@@ -778,7 +774,7 @@ class TestUcd500Server(unittest.TestCase):
 
         with (
             mock.patch("ucd.ucd500.UniTAP.OpfHandlerInternal"),
-            mock.patch("ucd.ucd500.time.sleep"),
+            mock.patch("ucd.server.time.sleep"),
         ):
             reply = self.server.SetRoleVideoTester(
                 video_pb2.SetRoleRequest(
@@ -812,12 +808,11 @@ class TestUcd500Server(unittest.TestCase):
             benign_ux_zero_fw,
             benign_ux_zero_fw,
             benign_ux_zero_fw,
-            benign_ux_zero_fw,
         ]
 
         with (
             mock.patch("ucd.ucd500.UniTAP.OpfHandlerInternal"),
-            mock.patch("ucd.ucd500.time.sleep"),
+            mock.patch("ucd.server.time.sleep"),
         ):
             reply = self.server.SetRoleVideoTester(
                 video_pb2.SetRoleRequest(
@@ -854,6 +849,209 @@ class TestUcd500Server(unittest.TestCase):
         self.server._close_device()
         self.assertIsNone(self.mock_dev.opf_handler)
         self.mock_io.set_role.assert_called_with(None)
+
+    def test_select_role_clears_existing_role_when_switching_roles(
+        self,
+    ) -> None:
+        """Verifies switching roles clears SDK role and reopens TSI handle."""
+        self._open_and_set_role()
+        self.mock_io.set_role.reset_mock()
+        dp_role = mock.MagicMock(spec=UniTAP.dev.UCD500.DPSourceUSBCSink)
+        dp_role.dprx = self.mock_port_rx
+        dp_role.dptx = self.mock_port_tx
+        dp_role.pdcrx = mock.MagicMock()
+        self.mock_dev.select_role.return_value = dp_role
+
+        with (
+            mock.patch("ucd.ucd500.UniTAP.OpfHandlerInternal"),
+            mock.patch("ucd.server.time.sleep"),
+        ):
+            reply = self.server.SetRoleVideoTester(
+                video_pb2.SetRoleRequest(
+                    id=FAKE_SERIAL,
+                    role=video_pb2.ROLE_DPSOURCE_USBCSINK,
+                ),
+                self.context,
+            )
+
+        self.assertTrue(reply.success)
+        self.mock_io.set_role.assert_called_once_with(None)
+        self.mock_tsilib.close.assert_called_once_with(self.mock_dev)
+        self.assertEqual(self.mock_tsilib.open.call_count, 2)
+
+    def test_select_role_recovers_from_empty_role_list(self) -> None:
+        """Verifies _select_role reopens and rescans when role_list is []."""
+        self.server.OpenVideoTester(
+            video_pb2.OpenVideoTesterRequest(id=FAKE_SERIAL), self.context
+        )
+        self.mock_dev._TSIDevice__role_list = []
+
+        def reopen_with_roles(serial: str):
+            del serial
+            self.mock_dev._TSIDevice__role_list = [
+                UniTAP.dev.UCD500.USBCSourceUSBCSink
+            ]
+            return self.mock_dev
+
+        self.mock_tsilib.open.side_effect = reopen_with_roles
+        UniTAP.libs.lib_tsi.tsi.TSIX_DEV_RescanDevices.reset_mock()
+
+        with (
+            mock.patch("ucd.ucd500.UniTAP.OpfHandlerInternal"),
+            mock.patch("ucd.server.time.sleep"),
+        ):
+            reply = self.server.SetRoleVideoTester(
+                video_pb2.SetRoleRequest(
+                    id=FAKE_SERIAL,
+                    role=video_pb2.ROLE_USBCSOURCE_USBCSINK,
+                ),
+                self.context,
+            )
+
+        self.assertTrue(reply.success)
+        self.mock_tsilib.close.assert_called_once_with(self.mock_dev)
+        UniTAP.libs.lib_tsi.tsi.TSIX_DEV_RescanDevices.assert_called_once()
+        self.assertEqual(self.mock_dev.select_role.call_count, 1)
+
+    def test_select_role_tier3_hard_recovery_polls_until_roles_populated(
+        self,
+    ) -> None:
+        """Verifies Tier 3 hard recovery runs NIOS reset, bounce, and poll."""
+        self.server.OpenVideoTester(
+            video_pb2.OpenVideoTesterRequest(id=FAKE_SERIAL), self.context
+        )
+        self.mock_dev.select_role.side_effect = [
+            UniTAP.dev.device.NotExistingRoleSelected("Attempt 1 failed"),
+            UniTAP.dev.device.NotExistingRoleSelected("Attempt 2 failed"),
+            self.mock_role,
+        ]
+
+        booting_dev = mock.MagicMock()
+        booting_dev._TSIDevice__role_list = []
+        self.mock_dev._TSIDevice__role_list = [
+            UniTAP.dev.UCD500.USBCSourceUSBCSink
+        ]
+        self.mock_tsilib.open.side_effect = [
+            self.mock_dev,
+            RuntimeError("USB still enumerating"),
+            booting_dev,
+            self.mock_dev,
+        ]
+
+        with (
+            mock.patch("ucd.ucd500.UniTAP.OpfHandlerInternal"),
+            mock.patch("ucd.server.time.sleep"),
+            mock.patch.object(
+                self.server, "_force_usb_reenumeration", return_value=True
+            ) as mock_usb_bounce,
+        ):
+            reply = self.server.SetRoleVideoTester(
+                video_pb2.SetRoleRequest(
+                    id=FAKE_SERIAL,
+                    role=video_pb2.ROLE_USBCSOURCE_USBCSINK,
+                ),
+                self.context,
+            )
+
+        self.assertTrue(reply.success)
+        self.mock_io.reset.assert_called_once()
+        mock_usb_bounce.assert_called_once_with(FAKE_SERIAL)
+        self.assertEqual(self.mock_dev.select_role.call_count, 3)
+
+    @mock.patch("ucd.server.time.sleep")
+    def test_power_cycle_polls_rescan_and_restores_role(
+        self, mock_sleep: mock.MagicMock
+    ) -> None:
+        """Verifies PowerCycle waits 30s, polls rescan, and restores role."""
+        self._open_and_set_role()
+        self.mock_tsilib._TsiLib__device_list = [self.mock_dev]
+        booting_dev = mock.MagicMock()
+        booting_dev._TSIDevice__role_list = []
+        ready_dev = self.mock_dev
+        ready_dev._TSIDevice__role_list = [UniTAP.dev.UCD500.USBCSourceUSBCSink]
+        self.mock_tsilib.open.side_effect = [
+            RuntimeError("Device not yet enumerated"),
+            booting_dev,
+            ready_dev,
+        ]
+        UniTAP.libs.lib_tsi.tsi.TSIX_DEV_RescanDevices.reset_mock()
+
+        with (
+            mock.patch("ucd.ucd500.UniTAP.OpfHandlerInternal"),
+            mock.patch.object(
+                self.server, "_force_usb_reenumeration", return_value=True
+            ) as mock_usb_bounce,
+        ):
+            self.server.PowerCycle(
+                video_pb2.PowerCycleRequest(id=FAKE_SERIAL),
+                self.context,
+            )
+
+        self.mock_io.reset.assert_called_once()
+        self.assertEqual(self.server._HW_RESET_INITIAL_WAIT_SEC, 30)
+        mock_sleep.assert_any_call(30)
+        mock_usb_bounce.assert_called_once_with(FAKE_SERIAL)
+        self.assertEqual(
+            UniTAP.libs.lib_tsi.tsi.TSIX_DEV_RescanDevices.call_count, 3
+        )
+        self.assertEqual(self.mock_dev.select_role.call_count, 2)
+        self.assertEqual(self.mock_tsilib._TsiLib__device_list, [])
+
+    @mock.patch("ucd.server.time.sleep")
+    def test_power_cycle_rejects_mismatched_serial(
+        self, mock_sleep: mock.MagicMock
+    ) -> None:
+        """Verifies PowerCycle rejects a mismatched request.id when open."""
+        del mock_sleep
+        self._open_and_set_role()
+        self.mock_io.reset.reset_mock()
+
+        with (
+            mock.patch.object(
+                self.server, "_force_usb_reenumeration"
+            ) as mock_usb_bounce,
+            self.assertRaises(RuntimeError) as ctx,
+        ):
+            self.server.PowerCycle(
+                video_pb2.PowerCycleRequest(id="WRONG_SERIAL"),
+                self.context,
+            )
+
+        self.assertIn(
+            f"Serial 'WRONG_SERIAL' is not the active device '{FAKE_SERIAL}'",
+            str(ctx.exception),
+        )
+        self.mock_io.reset.assert_not_called()
+        mock_usb_bounce.assert_not_called()
+        self.assertEqual(self.server._serial, FAKE_SERIAL)
+
+    @mock.patch("ucd.server.time.sleep")
+    def test_close_then_power_cycle_leaves_device_closed_without_role_set(
+        self, mock_sleep: mock.MagicMock
+    ) -> None:
+        """Verifies CloseVideoTester + PowerCycle leaves tester closed."""
+        del mock_sleep
+        self._open_and_set_role()
+        self.server.CloseVideoTester(
+            video_pb2.CloseVideoTesterRequest(id=FAKE_SERIAL), self.context
+        )
+        self.assertIsNone(self.server._last_requested_role)
+        self.assertIsNone(self.server._dev)
+        self.assertIsNone(self.server._serial)
+        self.mock_dev.select_role.reset_mock()
+
+        with mock.patch.object(
+            self.server, "_force_usb_reenumeration", return_value=True
+        ):
+            self.server.PowerCycle(
+                video_pb2.PowerCycleRequest(id=FAKE_SERIAL), self.context
+            )
+
+        self.mock_dev.select_role.assert_not_called()
+        self.assertIsNone(self.server._dev)
+        self.assertIsNone(self.server._role)
+        self.assertIsNone(self.server._serial)
+        self.assertIsNone(self.server._last_requested_role)
 
     def test_stop_event_capture_and_load_edid_clean_up_temp_files(
         self,
@@ -984,6 +1182,30 @@ class TestUcd500Server(unittest.TestCase):
             release_lock.set()
             holder.join(timeout=2.0)
 
+    def test_ucd422_server_inherits_tiered_role_selection(self) -> None:
+        """Verifies Ucd422Server uses UcdServer._select_role and binds hdrx."""
+        hdmi_server = ucd422.Ucd422Server()
+        hdmi_role = mock.MagicMock(spec=UniTAP.dev.UCD422.HDMISourceHDMISink)
+        hdmi_role.hdrx = mock.MagicMock()
+        hdmi_role.hdrx.video_capturer.status = UniTAP.VideoCaptureStatus.Idle
+        self.mock_dev.select_role.side_effect = [
+            UniTAP.dev.device.NotExistingRoleSelected("Transient open race"),
+            hdmi_role,
+        ]
+        hdmi_server.OpenVideoTester(
+            video_pb2.OpenVideoTesterRequest(id=FAKE_SERIAL), self.context
+        )
+
+        reply = hdmi_server.SetRoleVideoTester(
+            video_pb2.SetRoleRequest(
+                id=FAKE_SERIAL,
+                role=video_pb2.ROLE_HDMISOURCE_HDMISINK,
+            ),
+            self.context,
+        )
+        self.assertTrue(reply.success)
+        self.assertIs(hdmi_server._port_rx, hdmi_role.hdrx)
+
     def test_run_compliance_test_unknown_group_raises_clean_error(
         self,
     ) -> None:
@@ -999,6 +1221,134 @@ class TestUcd500Server(unittest.TestCase):
             self.server.RunComplianceTest(fake_req, self.context)
 
         self.assertIn("Test group is unknown 999999", str(ctx.exception))
+
+    @mock.patch("ucd.server.time.sleep")
+    def test_reopen_after_reset_exhausts_polls_and_raises(
+        self, mock_sleep: mock.MagicMock
+    ) -> None:
+        """Verifies _reopen_after_reset raises after exhausting all polls."""
+        del mock_sleep
+        booting_dev = mock.MagicMock()
+        booting_dev._TSIDevice__role_list = []
+        self.mock_tsilib.open.side_effect = [
+            RuntimeError("USB not ready"),
+            booting_dev,
+        ] * 5
+
+        with self.assertRaises(RuntimeError) as ctx:
+            self.server._reopen_after_reset(FAKE_SERIAL)
+
+        self.assertIn(
+            f"UCD {FAKE_SERIAL} failed to return after USB bounce",
+            str(ctx.exception),
+        )
+        self.assertEqual(self.mock_tsilib.open.call_count, 10)
+        self.assertIsNone(self.server._dev)
+
+    @mock.patch("ucd.server.time.sleep")
+    def test_hard_reset_and_reopen_continues_when_reset_device_io_raises(
+        self, mock_sleep: mock.MagicMock
+    ) -> None:
+        """Verifies _hard_reset_and_reopen continues if NIOS reset raises."""
+        del mock_sleep
+        self.server.OpenVideoTester(
+            video_pb2.OpenVideoTesterRequest(id=FAKE_SERIAL), self.context
+        )
+        self.mock_io.reset.side_effect = RuntimeError("NIOS reset timeout")
+        self.mock_dev._TSIDevice__role_list = [
+            UniTAP.dev.UCD500.USBCSourceUSBCSink
+        ]
+
+        with mock.patch.object(
+            self.server, "_force_usb_reenumeration", return_value=True
+        ) as mock_bounce:
+            self.server._hard_reset_and_reopen(FAKE_SERIAL)
+
+        self.mock_io.reset.assert_called_once()
+        mock_bounce.assert_called_once_with(FAKE_SERIAL)
+        self.assertIs(self.server._dev, self.mock_dev)
+
+    @mock.patch("ucd.server.time.sleep")
+    def test_force_usb_reenumeration_success_and_error_branches(
+        self, mock_sleep: mock.MagicMock
+    ) -> None:
+        """Verifies _force_usb_reenumeration ioctl, OSError, and miss."""
+        del mock_sleep
+        with mock.patch("ucd.server.glob.glob", return_value=[]):
+            self.assertFalse(self.server._force_usb_reenumeration(FAKE_SERIAL))
+
+        file_map = {
+            "/sys/bus/usb/devices/3-1/serial": f"{FAKE_SERIAL}\n",
+            "/sys/bus/usb/devices/3-1/busnum": "3\n",
+            "/sys/bus/usb/devices/3-1/devnum": "14\n",
+        }
+
+        def fake_open(path, *args, **kwargs):
+            del args, kwargs
+            if path in file_map:
+                return mock.mock_open(read_data=file_map[path])()
+            raise FileNotFoundError(path)
+
+        with (
+            mock.patch(
+                "ucd.server.glob.glob",
+                return_value=["/sys/bus/usb/devices/3-1/serial"],
+            ),
+            mock.patch("builtins.open", side_effect=fake_open),
+            mock.patch("ucd.server.os.open", return_value=42) as mock_os_open,
+            mock.patch("ucd.server.os.close") as mock_os_close,
+            mock.patch(
+                "ucd.server.fcntl.ioctl",
+                side_effect=OSError("Permission denied"),
+            ),
+        ):
+            self.assertFalse(self.server._force_usb_reenumeration(FAKE_SERIAL))
+            mock_os_open.assert_called_once_with(
+                "/dev/bus/usb/003/014", os.O_WRONLY
+            )
+            mock_os_close.assert_called_once_with(42)
+
+        with (
+            mock.patch(
+                "ucd.server.glob.glob",
+                return_value=["/sys/bus/usb/devices/3-1/serial"],
+            ),
+            mock.patch("builtins.open", side_effect=fake_open),
+            mock.patch("ucd.server.os.open", return_value=42),
+            mock.patch("ucd.server.os.close") as mock_os_close,
+            mock.patch("ucd.server.fcntl.ioctl") as mock_ioctl,
+        ):
+            self.assertTrue(self.server._force_usb_reenumeration(FAKE_SERIAL))
+            mock_ioctl.assert_called_once_with(42, 21780, 0)
+            mock_os_close.assert_called_once_with(42)
+
+    @mock.patch("ucd.server.time.sleep")
+    def test_power_cycle_role_fallback_when_last_requested_role_is_none(
+        self, mock_sleep: mock.MagicMock
+    ) -> None:
+        """Verifies PowerCycle falls back to self._role.__class__."""
+        del mock_sleep
+        self._open_and_set_role()
+        self.server._role = weakref.proxy(self.mock_role)
+        self.server._last_requested_role = None
+        self.mock_dev._TSIDevice__role_list = [
+            UniTAP.dev.UCD500.USBCSourceUSBCSink
+        ]
+        self.mock_dev.select_role.reset_mock()
+
+        with (
+            mock.patch("ucd.ucd500.UniTAP.OpfHandlerInternal"),
+            mock.patch.object(
+                self.server, "_force_usb_reenumeration", return_value=True
+            ),
+        ):
+            self.server.PowerCycle(
+                video_pb2.PowerCycleRequest(id=FAKE_SERIAL), self.context
+            )
+
+        self.mock_dev.select_role.assert_called_once_with(
+            self.mock_role.__class__
+        )
 
     def test_get_rx_port_io_resolution_order(self) -> None:
         """Verifies _get_rx_port_io checks None, _TSIPort__io, and _Port__io."""
@@ -1252,9 +1602,15 @@ class TestUcd500Server(unittest.TestCase):
         self.assertIn("Serial parsing is malformed!", str(ctx2.exception))
         self.context.set_code.assert_called_with(grpc.StatusCode.INTERNAL)
 
-        # 3. OpenVideoTester when _open_device raises
+        # 3. OpenVideoTester when _open_device raises across all recovery polls
         self.mock_tsilib.open.side_effect = RuntimeError("USB open failed")
-        with self.assertRaises(RuntimeError) as ctx3:
+        with (
+            mock.patch("ucd.server.time.sleep"),
+            mock.patch.object(
+                self.server, "_force_usb_reenumeration", return_value=False
+            ),
+            self.assertRaises(RuntimeError) as ctx3,
+        ):
             self.server.OpenVideoTester(
                 video_pb2.OpenVideoTesterRequest(id=FAKE_SERIAL), self.context
             )
@@ -1295,6 +1651,174 @@ class TestUcd500Server(unittest.TestCase):
             video_pb2.CloseVideoTesterRequest(id=FAKE_SERIAL), self.context
         )
         self.assertTrue(close_reply.success)
+        self.assertIsNone(self.server._serial)
+        self.assertIsNone(self.server._last_requested_role)
+
+    @mock.patch("ucd.server.time.sleep")
+    def test_get_video_testers_read_only_and_targeted_usb_bounce_safety(
+        self, mock_sleep: mock.MagicMock
+    ) -> None:
+        """Verifies GetVideoTesters is read-only and USB bounce is safe."""
+        del mock_sleep
+        # Case 1: When a handle is open and libTSI hides it from scan_devices,
+        # GetVideoTesters stays read-only (does not close _dev or bounce USB)
+        # and still includes the open self._serial in the response.
+        self._open_and_set_role()
+        self.mock_tsilib.close.reset_mock()
+        self.mock_tsilib.get_list_of_available_devices.return_value = []
+        with mock.patch.object(
+            self.server, "_force_usb_reenumeration"
+        ) as mock_usb_bounce:
+            resp_a = self.server.GetVideoTesters(None, self.context)
+
+        self.assertEqual(len(resp_a.testers), 1)
+        self.assertEqual(resp_a.testers[0].id, FAKE_SERIAL)
+        self.assertEqual(resp_a.testers[0].name, "UCD-500")
+        self.assertIsNotNone(self.server._dev)
+        self.mock_tsilib.close.assert_not_called()
+        mock_usb_bounce.assert_not_called()
+
+        # Case 2: When closed and 0 devices are found, GetVideoTesters stays
+        # read-only and does not trigger USB re-enumeration.
+        self.server.CloseVideoTester(
+            video_pb2.CloseVideoTesterRequest(id=FAKE_SERIAL), self.context
+        )
+        self.mock_tsilib.get_list_of_available_devices.return_value = []
+        with mock.patch.object(
+            self.server, "_force_usb_reenumeration"
+        ) as mock_usb_bounce2:
+            resp_b = self.server.GetVideoTesters(None, self.context)
+        self.assertEqual(len(resp_b.testers), 0)
+        mock_usb_bounce2.assert_not_called()
+
+        # Case 3 (Cross-plugin safety): Untargeted _force_usb_reenumeration
+        # must NOT reset a USB node when product is missing or mismatches.
+        hdmi_server = ucd422.Ucd422Server()
+        file_map_no_prod = {
+            "/sys/bus/usb/devices/3-1/idVendor": "1992\n",
+            "/sys/bus/usb/devices/3-1/busnum": "3\n",
+            "/sys/bus/usb/devices/3-1/devnum": "14\n",
+        }
+
+        def fake_open_no_prod(path, *args, **kwargs):
+            del args, kwargs
+            if path in file_map_no_prod:
+                return mock.mock_open(read_data=file_map_no_prod[path])()
+            raise FileNotFoundError(path)
+
+        with (
+            mock.patch(
+                "ucd.server.glob.glob",
+                return_value=["/sys/bus/usb/devices/3-1/idVendor"],
+            ),
+            mock.patch("builtins.open", side_effect=fake_open_no_prod),
+            mock.patch("ucd.server.os.open") as mock_os_open_cross,
+        ):
+            self.assertFalse(hdmi_server._force_usb_reenumeration(None))
+            mock_os_open_cross.assert_not_called()
+
+        # Case 4 (Shared Satlab host safety): When serial_number is set, the
+        # idVendor fallback skips another UCD-500 whose serial is readable and
+        # does not match ("9999AAAA"), and only resets the wedged UCD-500
+        # whose serial descriptor is unreadable.
+        shared_host_files = {
+            "/sys/bus/usb/devices/3-1/idVendor": "1992\n",
+            "/sys/bus/usb/devices/3-1/serial": "9999AAAA\n",
+            "/sys/bus/usb/devices/3-1/product": "UCD-500\n",
+            "/sys/bus/usb/devices/3-1/busnum": "3\n",
+            "/sys/bus/usb/devices/3-1/devnum": "10\n",
+            "/sys/bus/usb/devices/3-2/idVendor": "1992\n",
+            "/sys/bus/usb/devices/3-2/product": "UCD-500\n",
+            "/sys/bus/usb/devices/3-2/busnum": "3\n",
+            "/sys/bus/usb/devices/3-2/devnum": "14\n",
+        }
+
+        def fake_open_shared(path, *args, **kwargs):
+            del args, kwargs
+            if path in shared_host_files:
+                return mock.mock_open(read_data=shared_host_files[path])()
+            raise FileNotFoundError(path)
+
+        def fake_glob_shared(pattern: str):
+            if pattern.endswith("/serial"):
+                return ["/sys/bus/usb/devices/3-1/serial"]
+            return [
+                "/sys/bus/usb/devices/3-1/idVendor",
+                "/sys/bus/usb/devices/3-2/idVendor",
+            ]
+
+        with (
+            mock.patch("ucd.server.glob.glob", side_effect=fake_glob_shared),
+            mock.patch("builtins.open", side_effect=fake_open_shared),
+            mock.patch(
+                "ucd.server.os.open", return_value=42
+            ) as mock_os_open_shared,
+            mock.patch("ucd.server.os.close"),
+            mock.patch("ucd.server.fcntl.ioctl") as mock_ioctl_targeted,
+        ):
+            self.assertTrue(self.server._force_usb_reenumeration(FAKE_SERIAL))
+            mock_os_open_shared.assert_called_once_with(
+                "/dev/bus/usb/003/014", os.O_WRONLY
+            )
+            mock_ioctl_targeted.assert_called_once_with(42, 21780, 0)
+
+    @mock.patch("ucd.server.time.sleep")
+    def test_open_video_tester_self_heals_via_hard_reset(
+        self, mock_sleep: mock.MagicMock
+    ) -> None:
+        """Verifies OpenVideoTester runs _hard_reset_and_reopen on failure."""
+        del mock_sleep
+        ready_dev = self.mock_dev
+        ready_dev._TSIDevice__role_list = [UniTAP.dev.UCD500.USBCSourceUSBCSink]
+
+        # 1. Initial _open_device raises RuntimeError -> recovers via hard reset
+        self.mock_tsilib.open.side_effect = [
+            RuntimeError("Initial open failed"),
+            ready_dev,
+        ]
+        with mock.patch.object(
+            self.server, "_force_usb_reenumeration", return_value=True
+        ) as mock_bounce:
+            reply1 = self.server.OpenVideoTester(
+                video_pb2.OpenVideoTesterRequest(id=FAKE_SERIAL), self.context
+            )
+        self.assertTrue(reply1.success)
+        self.assertEqual(self.server._serial, FAKE_SERIAL)
+        mock_bounce.assert_called_once_with(FAKE_SERIAL)
+
+        # 2. Initial _open_device returns empty role list -> recovers via reset
+        self.server.CloseVideoTester(
+            video_pb2.CloseVideoTesterRequest(id=FAKE_SERIAL), self.context
+        )
+        booting_dev = mock.MagicMock()
+        booting_dev._TSIDevice__role_list = []
+        self.mock_tsilib.open.side_effect = [
+            booting_dev,
+            ready_dev,
+        ]
+        with mock.patch.object(
+            self.server, "_force_usb_reenumeration", return_value=True
+        ) as mock_bounce2:
+            reply2 = self.server.OpenVideoTester(
+                video_pb2.OpenVideoTesterRequest(id=FAKE_SERIAL), self.context
+            )
+        self.assertTrue(reply2.success)
+        self.assertIs(self.server._dev, ready_dev)
+        mock_bounce2.assert_called_once_with(FAKE_SERIAL)
+
+        # 3. Failed reopen after closing previous session clears _serial & role
+        self.server._last_requested_role = UniTAP.dev.UCD500.USBCSourceUSBCSink
+        self.mock_tsilib.open.side_effect = RuntimeError("Perm failure")
+        with (
+            mock.patch.object(
+                self.server, "_force_usb_reenumeration", return_value=False
+            ),
+            self.assertRaises(RuntimeError),
+        ):
+            self.server.OpenVideoTester(
+                video_pb2.OpenVideoTesterRequest(id="OTHER_SERIAL"),
+                self.context,
+            )
         self.assertIsNone(self.server._serial)
         self.assertIsNone(self.server._last_requested_role)
 
