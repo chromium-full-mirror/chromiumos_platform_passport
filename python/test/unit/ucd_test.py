@@ -677,6 +677,10 @@ class TestUcd500Server(unittest.TestCase):
         dp_status.dut_connection = "Connected"
         link_caps = self.mock_port_rx.link.capabilities.link_caps_status
         link_caps.return_value.mst = False
+        stream = self.mock_port_rx.link.status.stream.return_value
+        stream.video_mode.timing.hactive = 3840
+        stream.video_mode.timing.vactive = 2160
+        stream.video_mode.color_info.bpp = 24
         self.mock_port_rx.video_capturer.pop_element.side_effect = [
             ValueError("Minimum buffer size must be more than 0"),
             None,
@@ -1053,6 +1057,129 @@ class TestUcd500Server(unittest.TestCase):
         self.assertIsNone(self.server._serial)
         self.assertIsNone(self.server._last_requested_role)
 
+    @mock.patch("ucd.server.time.sleep")
+    def test_screenshot_retries_on_dsc_decode_error_minus_5_and_cleans_temp_bmp(
+        self, mock_sleep: mock.MagicMock
+    ) -> None:
+        """Verifies DSC -5 error triggers retry and unlinks temp BMP files."""
+        self._open_and_set_role()
+        dp_status = self.mock_role.pdcrx.dp_alt_mode.status.dut_dp_alt_mode
+        dp_status.dut_connection = "Connected"
+        link_caps = self.mock_port_rx.link.capabilities.link_caps_status
+        link_caps.return_value.mst = False
+        self.mock_port_rx.video_capturer.capture_result.buffer = [object()]
+
+        seen_paths: list[str] = []
+        attempt_counter = {"count": 0}
+
+        def save_bmp(file_format, path, index) -> None:
+            del file_format, index
+            seen_paths.append(path)
+            attempt_counter["count"] += 1
+            if attempt_counter["count"] == 1:
+                with open(path, "wb") as f:
+                    f.write(b"PARTIAL")
+                raise RuntimeError("Decoding failed with error code: -5")
+            with open(path, "wb") as f:
+                f.write(b"BM_DSC_DECODED_OK")
+
+        capture_result = self.mock_port_rx.video_capturer.capture_result
+        capture_result.save_image_to_file.side_effect = save_bmp
+
+        reply = self.server.ScreenshotVideoTester(
+            video_pb2.ScreenshotVideoTesterRequest(id=FAKE_SERIAL, id_stream=0),
+            self.context,
+        )
+
+        self.assertEqual(reply.screenshot, b"BM_DSC_DECODED_OK")
+        self.assertEqual(len(seen_paths), 2)
+        for path in seen_paths:
+            self.assertFalse(os.path.exists(path))
+        mock_sleep.assert_any_call(self.server._SCREENSHOT_RETRY_DELAY_SEC)
+
+    @mock.patch("ucd.server.time.sleep")
+    def test_screenshot_retries_on_get_frame_dsc_error(
+        self, mock_sleep: mock.MagicMock
+    ) -> None:
+        """Verifies get_frame() DSC -5 failure is caught and retried."""
+        del mock_sleep
+        self._open_and_set_role()
+        dp_status = self.mock_role.pdcrx.dp_alt_mode.status.dut_dp_alt_mode
+        dp_status.dut_connection = "Connected"
+        link_caps = self.mock_port_rx.link.capabilities.link_caps_status
+        link_caps.return_value.mst = False
+
+        bad_frame = mock.MagicMock()
+        bad_frame.get_frame.side_effect = RuntimeError(
+            "Decoding failed with error code: -5"
+        )
+        good_frame = mock.MagicMock()
+        good_frame.get_frame.return_value = object()
+
+        def pop_side_effect():
+            if self.mock_port_rx.video_capturer.pop_element.call_count == 1:
+                self.mock_port_rx.video_capturer.capture_result.buffer = [
+                    bad_frame
+                ]
+                return bad_frame
+            self.mock_port_rx.video_capturer.capture_result.buffer = [
+                good_frame
+            ]
+            return good_frame
+
+        self.mock_port_rx.video_capturer.pop_element.side_effect = (
+            pop_side_effect
+        )
+
+        def write_bmp(file_format, path, index) -> None:
+            del file_format, index
+            with open(path, "wb") as f:
+                f.write(b"BM_FROM_GOOD_FRAME")
+
+        capture_result = self.mock_port_rx.video_capturer.capture_result
+        capture_result.save_image_to_file.side_effect = write_bmp
+
+        reply = self.server.ScreenshotVideoTester(
+            video_pb2.ScreenshotVideoTesterRequest(id=FAKE_SERIAL, id_stream=0),
+            self.context,
+        )
+
+        self.assertEqual(reply.screenshot, b"BM_FROM_GOOD_FRAME")
+        bad_frame.get_frame.assert_called_once()
+        good_frame.get_frame.assert_called_once()
+
+    @mock.patch("ucd.server.time.sleep")
+    def test_screenshot_preserves_active_event_capture(
+        self, mock_sleep: mock.MagicMock
+    ) -> None:
+        """Verifies ScreenshotVideoTester re-arms event capture if active."""
+        del mock_sleep
+        self._open_and_set_role()
+        self.server.StartEventCapture(
+            video_pb2.StartEventCaptureRequest(id=FAKE_SERIAL), self.context
+        )
+        self.assertTrue(self.server._event_capture_active)
+
+        dp_status = self.mock_role.pdcrx.dp_alt_mode.status.dut_dp_alt_mode
+        dp_status.dut_connection = "Connected"
+        link_caps = self.mock_port_rx.link.capabilities.link_caps_status
+        link_caps.return_value.mst = False
+        self.mock_port_rx.video_capturer.capture_result.buffer = [object()]
+
+        def write_bmp(file_format, path, index) -> None:
+            del file_format, index
+            with open(path, "wb") as f:
+                f.write(b"BM_WITH_EVENTS")
+
+        capture_result = self.mock_port_rx.video_capturer.capture_result
+        capture_result.save_image_to_file.side_effect = write_bmp
+
+        self.server.ScreenshotVideoTester(
+            video_pb2.ScreenshotVideoTesterRequest(id=FAKE_SERIAL, id_stream=0),
+            self.context,
+        )
+        self.mock_port_rx._Port__io.set.assert_any_call(0x301, 1)
+
     def test_stop_event_capture_and_load_edid_clean_up_temp_files(
         self,
     ) -> None:
@@ -1367,6 +1494,74 @@ class TestUcd500Server(unittest.TestCase):
 
         setattr(port, "_TSIPort__io", tsi_port_io)
         self.assertIs(self.server._get_rx_port_io(), tsi_port_io)
+
+    @mock.patch("ucd.server.time.sleep")
+    def test_screenshot_unlatched_timing_and_empty_buffer_or_zero_bmp_branches(
+        self, mock_sleep: mock.MagicMock
+    ) -> None:
+        """Verifies stream bounds, unlatched timing wait, and empty checks."""
+        self._open_and_set_role()
+        dp_status = self.mock_role.pdcrx.dp_alt_mode.status.dut_dp_alt_mode
+        dp_status.dut_connection = "Connected"
+        link_caps = self.mock_port_rx.link.capabilities.link_caps_status
+        link_caps.return_value.mst = False
+
+        with self.assertRaises(ValueError):
+            self.server.ScreenshotVideoTester(
+                video_pb2.ScreenshotVideoTesterRequest(
+                    id=FAKE_SERIAL, id_stream=99
+                ),
+                self.context,
+            )
+        self.context.set_code.assert_called_with(
+            grpc.StatusCode.INVALID_ARGUMENT
+        )
+
+        # Unlatched timing (0x0) on check 1 latches on check 2 after 0.5s wait,
+        # then empty buffer raises.
+        unlatched_stream = mock.MagicMock()
+        unlatched_stream.video_mode.timing.hactive = 0
+        unlatched_stream.video_mode.timing.vactive = 0
+        unlatched_stream.video_mode.color_info.bpp = 0
+
+        latched_stream = mock.MagicMock()
+        latched_stream.video_mode.timing.hactive = 1920
+        latched_stream.video_mode.timing.vactive = 1080
+        latched_stream.video_mode.color_info.bpp = 24
+
+        self.mock_port_rx.link.status.stream.side_effect = [
+            unlatched_stream,
+            latched_stream,
+            latched_stream,
+        ]
+        self.mock_port_rx.video_capturer.capture_result.buffer = []
+
+        with self.assertRaises(RuntimeError) as ctx:
+            self.server.ScreenshotVideoTester(
+                video_pb2.ScreenshotVideoTesterRequest(
+                    id=FAKE_SERIAL, id_stream=0
+                ),
+                self.context,
+            )
+        self.assertIn("empty frame buffer", str(ctx.exception))
+        mock_sleep.assert_any_call(0.5)
+
+        # 0-byte BMP file raises RuntimeError.
+        self.mock_port_rx.link.status.stream.side_effect = None
+        self.mock_port_rx.link.status.stream.return_value = latched_stream
+        self.mock_port_rx.video_capturer.capture_result.buffer = [object()]
+        capture_result = self.mock_port_rx.video_capturer.capture_result
+        capture_result.save_image_to_file.side_effect = (
+            lambda file_format, path, index: None
+        )
+        with self.assertRaises(RuntimeError) as ctx2:
+            self.server.ScreenshotVideoTester(
+                video_pb2.ScreenshotVideoTesterRequest(
+                    id=FAKE_SERIAL, id_stream=0
+                ),
+                self.context,
+            )
+        self.assertIn("0 bytes", str(ctx2.exception))
 
     def test_ucd500_set_and_get_link_video_tester_all_branches(self) -> None:
         """Verifies Ucd500Server SetLinkVideoTester and GetLinkVideoTester."""
@@ -1821,6 +2016,164 @@ class TestUcd500Server(unittest.TestCase):
             )
         self.assertIsNone(self.server._serial)
         self.assertIsNone(self.server._last_requested_role)
+
+    @mock.patch("ucd.server.time.sleep")
+    def test_screenshot_aborts_failed_precondition_when_dut_stream_inactive(
+        self, mock_sleep: mock.MagicMock
+    ) -> None:
+        """Verifies ScreenshotVideoTester aborts with FAILED_PRECONDITION."""
+        self._open_and_set_role()
+        mock_sleep.reset_mock()
+        dp_status = self.mock_role.pdcrx.dp_alt_mode.status.dut_dp_alt_mode
+        dp_status.dut_connection = "Connected"
+        link_caps = self.mock_port_rx.link.capabilities.link_caps_status
+        link_caps.return_value.mst = False
+
+        stream = self.mock_port_rx.link.status.stream.return_value
+        stream.video_mode.timing.hactive = 0
+        stream.video_mode.timing.vactive = 0
+        stream.video_mode.color_info.bpp = 0
+        stream.video_mode.color_info.bpc = 0
+
+        self.mock_port_rx.video_capturer.start.reset_mock()
+        reply = self.server.ScreenshotVideoTester(
+            video_pb2.ScreenshotVideoTesterRequest(id=FAKE_SERIAL, id_stream=0),
+            self.context,
+        )
+
+        self.assertEqual(reply.screenshot, b"")
+        mock_sleep.assert_called_once_with(0.5)
+        self.mock_port_rx.video_capturer.start.assert_not_called()
+        self.context.abort.assert_called_once()
+        abort_code, abort_msg = self.context.abort.call_args[0]
+        self.assertEqual(abort_code, grpc.StatusCode.FAILED_PRECONDITION)
+        self.assertIn(
+            "DUT is not driving valid video on stream 0"
+            " (hactive=0, vactive=0, bpp=0)",
+            abort_msg,
+        )
+
+        # Case 2: ValueError("Video is not available.") also aborts with
+        # FAILED_PRECONDITION.
+        self.context.abort.reset_mock()
+        self.mock_port_rx.link.status.stream.side_effect = ValueError(
+            "Video is not available."
+        )
+        reply_unavail = self.server.ScreenshotVideoTester(
+            video_pb2.ScreenshotVideoTesterRequest(id=FAKE_SERIAL, id_stream=0),
+            self.context,
+        )
+        self.assertEqual(reply_unavail.screenshot, b"")
+        self.context.abort.assert_called_once()
+        abort_code2, abort_msg2 = self.context.abort.call_args[0]
+        self.assertEqual(abort_code2, grpc.StatusCode.FAILED_PRECONDITION)
+        self.assertIn("Video is not available.", abort_msg2)
+        self.mock_port_rx.link.status.stream.side_effect = None
+
+        # Case 3: When DP Alt Mode is disconnected (0 active streams),
+        # ScreenshotVideoTester(id_stream=0) aborts with FAILED_PRECONDITION
+        # ("0 active streams") rather than INVALID_ARGUMENT.
+        self.context.abort.reset_mock()
+        self.context.set_code.reset_mock()
+        dp_status.dut_connection = "No connection"
+        reply_zero_streams = self.server.ScreenshotVideoTester(
+            video_pb2.ScreenshotVideoTesterRequest(id=FAKE_SERIAL, id_stream=0),
+            self.context,
+        )
+        self.assertEqual(reply_zero_streams.screenshot, b"")
+        self.context.abort.assert_called_once()
+        abort_code3, abort_msg3 = self.context.abort.call_args[0]
+        self.assertEqual(abort_code3, grpc.StatusCode.FAILED_PRECONDITION)
+        self.assertIn("0 active streams", abort_msg3)
+        dp_status.dut_connection = "Connected"
+
+    @mock.patch("ucd.server.time.sleep")
+    def test_dsc_stream_zero_bpp_with_valid_bpc_passes_screenshot_and_info(
+        self, mock_sleep: mock.MagicMock
+    ) -> None:
+        """Verifies DSC stream with bpp=0, bpc=8 passes check & StreamInfo."""
+        del mock_sleep
+        self._open_and_set_role()
+        dp_status = self.mock_role.pdcrx.dp_alt_mode.status.dut_dp_alt_mode
+        dp_status.dut_connection = "Connected"
+        link_caps = self.mock_port_rx.link.capabilities.link_caps_status
+        link_caps.return_value.mst = False
+
+        stream = self.mock_port_rx.link.status.stream.return_value
+        stream.video_mode.timing.frame_rate = 60
+        stream.video_mode.timing.hactive = 3840
+        stream.video_mode.timing.vactive = 2160
+        stream.video_mode.timing.htotal = 4400
+        stream.video_mode.timing.vtotal = 2250
+        stream.video_mode.timing.hstart = 384
+        stream.video_mode.timing.vstart = 82
+        stream.video_mode.timing.hswidth = 88
+        stream.video_mode.timing.vswidth = 10
+        stream.video_mode.color_info.bpp = 0
+        stream.video_mode.color_info.bpc = 8
+        stream.video_mode.color_info.color_format = (
+            UniTAP.ColorInfo.ColorFormat.CF_DSC
+        )
+        stream.video_mode.color_info.colorimetry = (
+            UniTAP.ColorInfo.Colorimetry.CM_NONE
+        )
+        stream.video_mode.color_info.dynamic_range = (
+            UniTAP.ColorInfo.DynamicRange.DR_VESA
+        )
+        stream.crc = [0x1111, 0x2222, 0x3333]
+
+        self.mock_port_rx.video_capturer.capture_result.buffer = [object()]
+
+        def write_bmp(file_format, path, index) -> None:
+            del file_format, index
+            with open(path, "wb") as f:
+                f.write(b"BM_DSC_OK")
+
+        capture_result = self.mock_port_rx.video_capturer.capture_result
+        capture_result.save_image_to_file.side_effect = write_bmp
+
+        reply = self.server.ScreenshotVideoTester(
+            video_pb2.ScreenshotVideoTesterRequest(id=FAKE_SERIAL, id_stream=0),
+            self.context,
+        )
+        self.assertEqual(reply.screenshot, b"BM_DSC_OK")
+        self.context.abort.assert_not_called()
+
+        info_resp = self.server.GetStreamInfoVideoTester(
+            video_pb2.GetStreamInfoVideoTesterRequest(id=FAKE_SERIAL),
+            self.context,
+        )
+        self.assertEqual(len(info_resp.streams), 1)
+        self.assertEqual(info_resp.streams[0].bpp, 24)
+
+        # When MST is configured for 2 sinks (stream_num=2) but the DUT only
+        # negotiated 1 stream in link.status, stream(1) raises ValueError("...
+        # not available...") and GetStreamInfoVideoTester returns an inactive
+        # placeholder entry for stream 1.
+        link_caps.return_value.mst = True
+        link_caps.return_value.mst_sink_count = 2
+
+        def stream_side_effect(idx: int):
+            if idx == 0:
+                return stream
+            raise ValueError(
+                "Selected stream 1 is not available. Available stream"
+                " number: 1"
+            )
+
+        self.mock_port_rx.link.status.stream.side_effect = stream_side_effect
+        mst_info_resp = self.server.GetStreamInfoVideoTester(
+            video_pb2.GetStreamInfoVideoTesterRequest(id=FAKE_SERIAL),
+            self.context,
+        )
+        self.assertEqual(len(mst_info_resp.streams), 2)
+        self.assertEqual(mst_info_resp.streams[0].hactive, 3840)
+        self.assertEqual(mst_info_resp.streams[0].vactive, 2160)
+        self.assertEqual(mst_info_resp.streams[0].bpp, 24)
+        self.assertEqual(mst_info_resp.streams[1].hactive, 0)
+        self.assertEqual(mst_info_resp.streams[1].vactive, 0)
+        self.assertEqual(mst_info_resp.streams[1].bpp, 0)
+        self.mock_port_rx.link.status.stream.side_effect = None
 
 
 if __name__ == "__main__":

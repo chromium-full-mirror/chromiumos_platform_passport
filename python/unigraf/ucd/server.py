@@ -145,6 +145,7 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
     _TSI_DEVCAP_CONTROL = 0x210
     _TSI_DEVCAP_FLUSH_FX3 = 0x40000000
     _TSI_W_CAP_COMMAND = 0x301
+    _TSI_CAP_CMD_START = 1
     _TSI_CAP_CMD_STOP = 2
     _TSI_CAP_CONFIG = 0x302
     _TSI_USBC_FLUSH_BULK_PIPES_W = 0x5002C004
@@ -167,6 +168,7 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
         self._port_rx = None
         self._port_tx = None
         self._last_requested_role = None
+        self._event_capture_active = False
         self._device_name = device_name
 
         self._tsilib = UniTAP.TsiLib()
@@ -347,6 +349,7 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
 
     def _stop_active_capturers(self) -> None:
         """Stops any active event or video capturers on RX and TX ports."""
+        self._event_capture_active = False
         for port in (self._port_rx, self._port_tx):
             if port is not None:
                 for attr in ("event_capturer", "video_capturer"):
@@ -382,6 +385,19 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
             self._remove_from_tsilib_device_list(dev)
             del dev
             gc.collect()
+
+    def _resume_event_capture_if_active(self) -> None:
+        """Re-arms FPGA event capture if video_capturer.stop() halted it."""
+        if not self._event_capture_active:
+            return
+        port_io = self._get_rx_port_io()
+        if port_io is not None:
+            try:
+                port_io.set(self._TSI_W_CAP_COMMAND, self._TSI_CAP_CMD_START)
+            except Exception as e:  # pylint: disable=broad-except
+                logging.debug(
+                    "Failed to re-arm event capture after video stop: %s", e
+                )
 
     def _reset_video_capturer_pipeline(self) -> None:
         """Force-clears the video capturer pipeline and FPGA capture state."""
@@ -464,6 +480,8 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
                 logging.debug(
                     "Failed to restart event_capturer after reset: %s", e
                 )
+
+        self._resume_event_capture_if_active()
 
     def _ensure_video_capturer_idle(self) -> None:
         """Ensures the video capturer is Idle, stopping it if needed."""
@@ -1139,6 +1157,86 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
             raise RuntimeError("Screenshot file was written with 0 bytes")
         return screenshot_bytes
 
+    @staticmethod
+    def _is_non_positive_number(val: Any, min_valid: int = 1) -> bool:
+        """Returns True if val is a numeric (non-bool) value < min_valid."""
+        return (
+            isinstance(val, (int, float))
+            and not isinstance(val, bool)
+            and val < min_valid
+        )
+
+    @staticmethod
+    def _extract_stream_metric(stream: Any, nested_obj: Any, attr: str) -> Any:
+        """Reads a numeric stream metric from stream or nested_obj."""
+        direct_val = getattr(stream, attr, None)
+        if isinstance(direct_val, (int, float)) and not isinstance(
+            direct_val, bool
+        ):
+            return direct_val
+        nested_val = getattr(nested_obj, attr, None)
+        if isinstance(nested_val, (int, float)) and not isinstance(
+            nested_val, bool
+        ):
+            return nested_val
+        return nested_val if nested_val is not None else direct_val
+
+    def _check_dut_driving_valid_stream(
+        self, stream_id: int
+    ) -> tuple[bool, str]:
+        """Checks whether the DUT is driving valid video on stream_id."""
+        if self._port_rx is None:
+            return True, ""
+        try:
+            if self._get_number_of_video_streams() <= 0:
+                return False, "0 active streams"
+        except RuntimeError:
+            pass
+        try:
+            stream = self._port_rx.link.status.stream(stream_id)
+        except ValueError as e:
+            if "not available" in str(e).lower():
+                return False, str(e)
+            logging.debug(
+                "Unable to read stream %d status before capture: %s",
+                stream_id,
+                e,
+            )
+            return True, ""
+        except Exception as e:  # pylint: disable=broad-except
+            logging.debug(
+                "Unable to read stream %d status before capture: %s",
+                stream_id,
+                e,
+            )
+            return True, ""
+
+        video_mode = getattr(stream, "video_mode", None)
+        timing = getattr(video_mode, "timing", None)
+        color_info = getattr(video_mode, "color_info", None)
+
+        hactive = self._extract_stream_metric(stream, timing, "hactive")
+        vactive = self._extract_stream_metric(stream, timing, "vactive")
+        bpp = self._extract_stream_metric(stream, color_info, "bpp")
+        bpc = self._extract_stream_metric(stream, color_info, "bpc")
+
+        has_valid_bpc = (
+            isinstance(bpc, (int, float))
+            and not isinstance(bpc, bool)
+            and bpc >= 1
+        )
+        invalid_color_depth = (
+            self._is_non_positive_number(bpp, 1) and not has_valid_bpc
+        )
+
+        if (
+            self._is_non_positive_number(hactive, 1)
+            or self._is_non_positive_number(vactive, 2)
+            or invalid_color_depth
+        ):
+            return False, f"hactive={hactive}, vactive={vactive}, bpp={bpp}"
+        return True, ""
+
     # Do not log the request as the screenshots can get very big.
     @synchronized
     def ScreenshotVideoTester(self, request, context):
@@ -1153,7 +1251,7 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
         # Validate stream index against active hardware streams if supported.
         try:
             active_streams = self._get_number_of_video_streams()
-            if request.id_stream >= active_streams:
+            if request.id_stream < 0 or 0 < active_streams <= request.id_stream:
                 msg = (
                     f"Requested stream {request.id_stream} exceeds available "
                     f"streams ({active_streams})"
@@ -1164,6 +1262,29 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
                 raise ValueError(msg)
         except RuntimeError:
             pass
+
+        valid, details = self._check_dut_driving_valid_stream(request.id_stream)
+        if not valid:
+            logging.warning(
+                "Stream %d reports inactive/unlatched video (%s); waiting 0.5s"
+                " to re-check.",
+                request.id_stream,
+                details,
+            )
+            time.sleep(0.5)
+            valid, details = self._check_dut_driving_valid_stream(
+                request.id_stream
+            )
+            if not valid:
+                msg = (
+                    "DUT is not driving valid video on stream"
+                    f" {request.id_stream} ({details})"
+                )
+                logging.error(msg)
+                context.set_code(grpc.StatusCode.FAILED_PRECONDITION)
+                context.set_details(msg)
+                context.abort(grpc.StatusCode.FAILED_PRECONDITION, msg)
+                return video_pb2.ScreenshotVideoTesterResponse()
 
         max_attempts = self._SCREENSHOT_MAX_ATTEMPTS
         frame_latch_delay_sec = self._SCREENSHOT_LATCH_DELAY_SEC
@@ -1192,7 +1313,7 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
                         stream_number=request.id_stream,
                     )
                     time.sleep(frame_latch_delay_sec)
-                    self._port_rx.video_capturer.pop_element()
+                    popped_frame = self._port_rx.video_capturer.pop_element()
                 finally:
                     # Guarantee hardware capturer is stopped in all paths.
                     try:
@@ -1200,12 +1321,19 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
                     except Exception:  # pylint: disable=broad-except
                         pass
                     self._ensure_video_capturer_idle()
+                    self._resume_event_capture_if_active()
 
                 result = self._port_rx.video_capturer.capture_result
                 if not result.buffer:
                     raise RuntimeError(
                         "Capturer completed but returned an empty frame buffer"
                     )
+
+                for candidate in (result.buffer[0], popped_frame):
+                    get_frame_fn = getattr(candidate, "get_frame", None)
+                    if callable(get_frame_fn):
+                        get_frame_fn()
+                        break
 
                 screenshot_bytes = self._save_capture_bmp(result)
 
@@ -1253,7 +1381,19 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
 
         res = []
         for i in range(0, stream_num):
-            stream = self._port_rx.link.status.stream(i)
+            try:
+                stream = self._port_rx.link.status.stream(i)
+            except ValueError as e:
+                if "not available" in str(e).lower():
+                    logging.debug(
+                        "Stream %d not available in link status (%s); returning"
+                        " inactive stream entry.",
+                        i,
+                        e,
+                    )
+                    res.append(video_pb2.StreamInfoVideoTester())
+                    continue
+                raise
             color_format = translate.SDK_COLOR_FORMAT_TO_GRPC[
                 stream.video_mode.color_info.color_format
             ]
@@ -1263,6 +1403,17 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
             dynamic_range = translate.SDK_DYNAMIC_RANGE_TO_GRPC[
                 stream.video_mode.color_info.dynamic_range
             ]
+            raw_bpp = stream.video_mode.color_info.bpp
+            raw_bpc = getattr(stream.video_mode.color_info, "bpc", 0)
+            if (
+                self._is_non_positive_number(raw_bpp, 1)
+                and isinstance(raw_bpc, int)
+                and not isinstance(raw_bpc, bool)
+                and raw_bpc > 0
+            ):
+                effective_bpp = raw_bpc * 3
+            else:
+                effective_bpp = raw_bpp
             stream_info = video_pb2.StreamInfoVideoTester(
                 frame_rate=stream.video_mode.timing.frame_rate,
                 hactive=stream.video_mode.timing.hactive,
@@ -1273,7 +1424,7 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
                 vstart=stream.video_mode.timing.vstart,
                 hswidth=stream.video_mode.timing.hswidth,
                 vswidth=stream.video_mode.timing.vswidth,
-                bpp=stream.video_mode.color_info.bpp,
+                bpp=effective_bpp,
                 color_format=color_format,
                 colormetry=colometry,
                 dynamic_range=dynamic_range,

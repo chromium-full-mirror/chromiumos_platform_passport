@@ -275,6 +275,7 @@ class Ucd500Server(server.UcdServer):
 
         self._port_tx.event_capturer.start()
         self._port_rx.event_capturer.start()
+        self._event_capture_active = True
 
         return video_pb2.StartEventCaptureResponse()
 
@@ -284,6 +285,7 @@ class Ucd500Server(server.UcdServer):
         self._check_serial_active(request.id)
         logging.info("Running StopEventCapture")
 
+        self._event_capture_active = False
         self._port_tx.event_capturer.stop()
         self._port_rx.event_capturer.stop()
 
