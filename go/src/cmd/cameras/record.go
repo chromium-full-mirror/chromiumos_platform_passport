@@ -24,9 +24,13 @@ func Record() *cobra.Command {
 }
 
 type recordCmd struct {
-	portArg  int
-	cameras  []string
-	duration int32
+	portArg      int
+	cameras      []string
+	duration     int32
+	exposure     int32
+	width        int32
+	height       int32
+	whiteBalance int32
 }
 
 func (c *recordCmd) run(cmd *cobra.Command, args []string) error {
@@ -57,8 +61,12 @@ func (c *recordCmd) run(cmd *cobra.Command, args []string) error {
 
 	slog.Info("Recording video for cameras", "cameras", c.cameras, "duration", c.duration)
 	req := &passport.CaptureVideoRequest{
-		DeviceIds:       c.cameras,
-		DurationSeconds: c.duration,
+		DeviceIds:               c.cameras,
+		DurationSeconds:         c.duration,
+		ExposureMicroseconds:    c.exposure,
+		Width:                   c.width,
+		Height:                  c.height,
+		WhiteBalanceTemperature: c.whiteBalance,
 	}
 	stream, err := client.CaptureVideo(cmd.Context(), req)
 	if err != nil {
@@ -121,6 +129,18 @@ func (c *recordCmd) Cmd() *cobra.Command {
 
 	cmd.Flags().Int32Var(
 		&c.duration, "duration", 5, "Duration of the video in seconds.")
+
+	cmd.Flags().Int32Var(
+		&c.exposure, "exposure", 0, "Exposure time in microseconds.")
+
+	cmd.Flags().Int32Var(
+		&c.width, "width", 0, "Video width in pixels.")
+
+	cmd.Flags().Int32Var(
+		&c.height, "height", 0, "Video height in pixels.")
+
+	cmd.Flags().Int32Var(
+		&c.whiteBalance, "white-balance", 0, "White balance temperature in Kelvin.")
 
 	return cmd
 }

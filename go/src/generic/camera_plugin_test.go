@@ -9,7 +9,10 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"strings"
 	"testing"
+
+	"go.chromium.org/chromiumos/config/go/test/lab/api/passport"
 )
 
 // GenerateImage generates solid color within the given width and height image.
@@ -71,6 +74,56 @@ func TestGetAveragePixel(t *testing.T) {
 			}
 			if uint8(pixel.A) != test.pixel.A {
 				t.Errorf("Alpha does not match, got %v, want %v", pixel.A, test.pixel.A)
+			}
+		})
+	}
+}
+
+func TestBuildFFmpegVideoArgs(t *testing.T) {
+	tests := []struct {
+		name           string
+		ports          []string
+		serials        []string
+		req            *passport.CaptureVideoRequest
+		wantSubstrings []string
+	}{
+		{
+			name:    "single camera default size uses mjpeg 640x480",
+			ports:   []string{"/dev/video0"},
+			serials: []string{"cam0"},
+			req: &passport.CaptureVideoRequest{
+				DurationSeconds: 5,
+			},
+			wantSubstrings: []string{
+				"-f v4l2 -input_format mjpeg -video_size 640x480 -i /dev/video0",
+				"-vf drawtext=text='cam0 (/dev/video0)'",
+			},
+		},
+		{
+			name:    "multiple cameras custom 1080p includes mjpeg and xstack",
+			ports:   []string{"/dev/video0", "/dev/video2"},
+			serials: []string{"cam0", "cam1"},
+			req: &passport.CaptureVideoRequest{
+				DurationSeconds: 3,
+				Width:           1920,
+				Height:          1080,
+			},
+			wantSubstrings: []string{
+				"-f v4l2 -input_format mjpeg -video_size 1920x1080 -i /dev/video0",
+				"-f v4l2 -input_format mjpeg -video_size 1920x1080 -i /dev/video2",
+				"-filter_complex",
+				"xstack=inputs=2:layout=0_0|w0_0",
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := strings.Join(buildFFmpegVideoArgs(tc.ports, tc.serials, tc.req), " ")
+			for _, want := range tc.wantSubstrings {
+				if !strings.Contains(got, want) {
+					t.Errorf("buildFFmpegVideoArgs() = %q, missing %q", got, want)
+				}
 			}
 		})
 	}

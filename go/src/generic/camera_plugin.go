@@ -28,6 +28,10 @@ import (
 const (
 	jpegFormat                     = "Motion-JPEG"
 	defaultWhiteBalanceTemperature = 4600
+	defaultVideoWidth              = 640
+	defaultVideoHeight             = 480
+	defaultImageWidth              = 600
+	defaultImageHeight             = 600
 )
 
 var (
@@ -256,7 +260,7 @@ func (s *cameraPlugin) GetAveragePixel(ctx context.Context, req *passport.GetAve
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve device path: %w", err)
 	}
-	frame, err := captureFrame(ctx, devPort, req.GetExposureMicroseconds())
+	frame, err := captureFrame(ctx, devPort, req.GetExposureMicroseconds(), req.GetWidth(), req.GetHeight(), req.GetWhiteBalanceTemperature())
 	if err != nil {
 		return nil, fmt.Errorf("cannot get average pixel, failed to capture frame: %w", err)
 	}
@@ -277,7 +281,7 @@ func (s *cameraPlugin) AnalyzeImageHSV(ctx context.Context, req *passport.Analyz
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve device path: %w", err)
 	}
-	frame, err := captureFrame(ctx, devPort, req.GetExposureMicroseconds())
+	frame, err := captureFrame(ctx, devPort, req.GetExposureMicroseconds(), req.GetWidth(), req.GetHeight(), req.GetWhiteBalanceTemperature())
 	if err != nil {
 		return nil, fmt.Errorf("cannot analyze image HSV, failed to capture frame: %w", err)
 	}
@@ -316,43 +320,45 @@ func (s *cameraPlugin) AnalyzeImageHSV(ctx context.Context, req *passport.Analyz
 	}, nil
 }
 
-// CaptureVideo captures a tiled video from multiple cameras using ffmpeg directly.
-func (s *cameraPlugin) CaptureVideo(req *passport.CaptureVideoRequest, stream passport.CameraService_CaptureVideoServer) error {
-	slog.Info("Capturing tiled video using ffmpeg v4l2", "ids", req.GetDeviceIds(), "duration", req.GetDurationSeconds())
-
-	// Resolve all IDs first
-	ports := make([]string, 0, len(req.GetDeviceIds()))
-	serials := make([]string, 0, len(req.GetDeviceIds()))
-	for _, id := range req.GetDeviceIds() {
-		devPort, err := resolveDevicePath(id)
-		if err != nil {
-			slog.Warn("Failed to resolve device path", "id", id, "error", err)
-			continue
-		}
-		ports = append(ports, devPort)
-		serials = append(serials, id)
+func applyCameraControls(cam *webcam.Webcam, exposureUs, wbTemp int32) error {
+	if wbTemp == 0 {
+		wbTemp = defaultWhiteBalanceTemperature
 	}
+	if err := setManualExposure(cam, exposureUs); err != nil {
+		return fmt.Errorf("failed to set manual exposure: %w", err)
+	}
+	if err := setManualWhiteBalance(cam, wbTemp); err != nil {
+		return fmt.Errorf("failed to set manual white balance: %w", err)
+	}
+	return nil
+}
 
-	// Set auto-exposure for all cameras before starting ffmpeg
+func configureCameraControls(ports, serials []string, exposureUs, wbTemp int32) {
 	for i, port := range ports {
 		serial := serials[i]
 		cam, err := webcam.Open(port)
 		if err != nil {
-			slog.Warn("Failed to open camera to set auto-exposure", "port", port, "serial", serial, "error", err)
+			slog.Warn("Failed to open camera to configure controls", "port", port, "serial", serial, "error", err)
 			continue
 		}
-		if err := setManualExposure(cam, 0); err != nil {
-			slog.Warn("Failed to set auto-exposure", "port", port, "serial", serial, "error", err)
+		if err := applyCameraControls(cam, exposureUs, wbTemp); err != nil {
+			slog.Warn("Failed to configure camera controls", "port", port, "serial", serial, "error", err)
 		}
 		cam.Close()
 	}
+}
 
-	// ffmpeg -f v4l2 -input_format mjpeg -video_size 640x480 -i /dev/video0 ...
+func buildFFmpegVideoArgs(ports, serials []string, req *passport.CaptureVideoRequest) []string {
+	w, h := int32(defaultVideoWidth), int32(defaultVideoHeight)
+	if req.GetWidth() != 0 && req.GetHeight() != 0 {
+		w, h = req.GetWidth(), req.GetHeight()
+	}
+	videoSize := fmt.Sprintf("%dx%d", w, h)
 	args := []string{}
 	filter := ""
 	for i, port := range ports {
 		serial := serials[i]
-		args = append(args, "-f", "v4l2", "-input_format", "mjpeg", "-video_size", "640x480", "-i", port)
+		args = append(args, "-f", "v4l2", "-input_format", "mjpeg", "-video_size", videoSize, "-i", port)
 		// Label each stream: [v0], [v1], etc.
 		filter += fmt.Sprintf("[%d:v]drawtext=text='%s (%s)':fontcolor=white:fontsize=24:box=1:boxcolor=black@0.5:boxborderw=5:x=10:y=10[v%d];", i, serial, port, i)
 	}
@@ -379,7 +385,7 @@ func (s *cameraPlugin) CaptureVideo(req *passport.CaptureVideoRequest, stream pa
 		args = append(args, "-vf", fmt.Sprintf("drawtext=text='%s (%s)':fontcolor=white:fontsize=24:box=1:boxcolor=black@0.5:boxborderw=5:x=10:y=10", serials[0], ports[0]))
 	}
 
-	args = append(args,
+	return append(args,
 		"-t", fmt.Sprintf("%d", req.GetDurationSeconds()),
 		"-c:v", "libx264",
 		"-pix_fmt", "yuv420p",
@@ -388,6 +394,27 @@ func (s *cameraPlugin) CaptureVideo(req *passport.CaptureVideoRequest, stream pa
 		"-movflags", "frag_keyframe+empty_moov",
 		"pipe:1",
 	)
+}
+
+// CaptureVideo captures a tiled video from multiple cameras using ffmpeg directly.
+func (s *cameraPlugin) CaptureVideo(req *passport.CaptureVideoRequest, stream passport.CameraService_CaptureVideoServer) error {
+	slog.Info("Capturing tiled video using ffmpeg v4l2", "ids", req.GetDeviceIds(), "duration", req.GetDurationSeconds())
+
+	// Resolve all IDs first
+	ports := make([]string, 0, len(req.GetDeviceIds()))
+	serials := make([]string, 0, len(req.GetDeviceIds()))
+	for _, id := range req.GetDeviceIds() {
+		devPort, err := resolveDevicePath(id)
+		if err != nil {
+			slog.Warn("Failed to resolve device path", "id", id, "error", err)
+			continue
+		}
+		ports = append(ports, devPort)
+		serials = append(serials, id)
+	}
+
+	configureCameraControls(ports, serials, req.GetExposureMicroseconds(), req.GetWhiteBalanceTemperature())
+	args := buildFFmpegVideoArgs(ports, serials, req)
 
 	cmd := exec.CommandContext(stream.Context(), "ffmpeg", args...)
 	stdout, err := cmd.StdoutPipe()
@@ -430,10 +457,9 @@ func (s *cameraPlugin) CaptureVideo(req *passport.CaptureVideoRequest, stream pa
 	return nil
 }
 
-func captureFrame(ctx context.Context, devPort string, exposureMicroseconds int32) ([]byte, error) {
+func captureFrame(ctx context.Context, devPort string, exposureMicroseconds, width, height, whiteBalanceTemperature int32) ([]byte, error) {
 	const settlingTime = 10
-
-	slog.Info("Capturing frame", "port", devPort, "requested_exposure_us", exposureMicroseconds, "forced_white_balance_temp", defaultWhiteBalanceTemperature)
+	slog.Info("Capturing frame", "port", devPort, "requested_exposure_us", exposureMicroseconds, "width", width, "height", height, "white_balance_temp", whiteBalanceTemperature)
 
 	cam, err := webcam.Open(devPort)
 	if err != nil {
@@ -442,7 +468,7 @@ func captureFrame(ctx context.Context, devPort string, exposureMicroseconds int3
 	defer cam.Close()
 	slog.Info("Opened camera", "port", devPort)
 
-	if err := configureImageSize(ctx, cam); err != nil {
+	if err := configureImageSize(ctx, cam, width, height); err != nil {
 		return nil, fmt.Errorf("failed to configure image format for %q: %w", devPort, err)
 	}
 
@@ -456,14 +482,8 @@ func captureFrame(ctx context.Context, devPort string, exposureMicroseconds int3
 		slog.Warn("Error starting streaming retrying:", "port", devPort, "error", err)
 	}
 
-	err = setManualExposure(cam, exposureMicroseconds)
-	if err != nil {
-		return nil, fmt.Errorf("failed to set manual exposure: %w", err)
-	}
-
-	err = setManualWhiteBalance(cam, defaultWhiteBalanceTemperature)
-	if err != nil {
-		return nil, fmt.Errorf("failed to set manual white balance: %w", err)
+	if err := applyCameraControls(cam, exposureMicroseconds, whiteBalanceTemperature); err != nil {
+		return nil, err
 	}
 
 	logAllControls(cam, devPort, "before_settling")
@@ -536,13 +556,13 @@ func setManualExposure(cam *webcam.Webcam, exposureMicroseconds int32) error {
 func setControl(cam *webcam.Webcam, controlIDs map[string]webcam.ControlID, controls map[webcam.ControlID]webcam.Control, name string, value int32) error {
 	id, found := controlIDs[strings.ToLower(name)]
 	if !found || id == 0 {
-		return fmt.Errorf("Control '%s' not found on this camera.", name)
+		return fmt.Errorf("control %q not found on this camera", name)
 	}
 
 	// Get current control info to clamp the value
 	ctrlInfo, ok := controls[id]
 	if !ok {
-		return fmt.Errorf("Control info for '%s' (ID %d) not found after discovery.", name, id)
+		return fmt.Errorf("control info for %q (ID %d) not found after discovery", name, id)
 	}
 	setVal := value
 	if setVal < ctrlInfo.Min {
@@ -553,7 +573,7 @@ func setControl(cam *webcam.Webcam, controlIDs map[string]webcam.ControlID, cont
 	}
 	val, err := cam.GetControl(id)
 	if err != nil {
-		return fmt.Errorf("Failed to get control %s: %w", name, err)
+		return fmt.Errorf("failed to get control %s: %w", name, err)
 	}
 	slog.Info("Current control", "name", name, "value", val, "id", id)
 	slog.Info("Setting control", "name", name, "value", setVal)
@@ -576,10 +596,14 @@ func supportsJpeg(cam *webcam.Webcam) bool {
 }
 
 // Configures the requested image size when taking jpeg images.
-func configureImageSize(ctx context.Context, cam *webcam.Webcam) error {
+func configureImageSize(ctx context.Context, cam *webcam.Webcam, width, height int32) error {
+	w, h := uint32(defaultImageWidth), uint32(defaultImageHeight)
+	if width != 0 && height != 0 {
+		w, h = uint32(width), uint32(height)
+	}
 	for f, format := range cam.GetSupportedFormats() {
 		if format == "Motion-JPEG" {
-			if _, _, _, err := cam.SetImageFormat(f, uint32(600), uint32(600)); err != nil {
+			if _, _, _, err := cam.SetImageFormat(f, w, h); err != nil {
 				return fmt.Errorf("failed to set image format: %w", err)
 			}
 			return nil

@@ -24,10 +24,13 @@ func Capture() *cobra.Command {
 }
 
 type captureCmd struct {
-	portArg  int
-	cameras  []string
-	analyze  bool
-	exposure int32
+	portArg      int
+	cameras      []string
+	analyze      bool
+	exposure     int32
+	width        int32
+	height       int32
+	whiteBalance int32
 }
 
 func (c *captureCmd) run(cmd *cobra.Command, args []string) error {
@@ -52,7 +55,7 @@ func (c *captureCmd) run(cmd *cobra.Command, args []string) error {
 	}
 	slog.Info("Capturing image for cameras", "cameras", c.cameras)
 	for _, camera_id := range c.cameras {
-		frame := []byte{}
+		var frame []byte
 		if c.analyze {
 			req := &passport.AnalyzeHSVRequest{
 				DeviceId: camera_id,
@@ -62,7 +65,10 @@ func (c *captureCmd) run(cmd *cobra.Command, args []string) error {
 					"Blue":  &passport.HSVMask{Min: &passport.HSV{Hue: 220, Saturation: 0.5, Value: 0.55}, Max: &passport.HSV{Hue: 260, Saturation: 1.0, Value: 1.0}},
 					"Off":   &passport.HSVMask{Min: &passport.HSV{Hue: 0, Saturation: 0.0, Value: 0.0}, Max: &passport.HSV{Hue: 360, Saturation: 0.4, Value: 0.6}},
 				},
-				ExposureMicroseconds: c.exposure,
+				ExposureMicroseconds:    c.exposure,
+				Width:                   c.width,
+				Height:                  c.height,
+				WhiteBalanceTemperature: c.whiteBalance,
 			}
 			resp, err := client.AnalyzeImageHSV(cmd.Context(), req)
 			if err != nil {
@@ -72,12 +78,15 @@ func (c *captureCmd) run(cmd *cobra.Command, args []string) error {
 			frame = resp.GetFrame()
 		} else {
 			req := &passport.GetAveragePixelRequest{
-				DeviceId:             camera_id,
-				ExposureMicroseconds: c.exposure,
+				DeviceId:                camera_id,
+				ExposureMicroseconds:    c.exposure,
+				Width:                   c.width,
+				Height:                  c.height,
+				WhiteBalanceTemperature: c.whiteBalance,
 			}
 			resp, err := client.GetAveragePixel(cmd.Context(), req)
 			if err != nil {
-				return fmt.Errorf("failed to capture iamge for camera: %s: %w", camera_id, err)
+				return fmt.Errorf("failed to capture image for camera: %s: %w", camera_id, err)
 			}
 			slog.Info("average pixel value", "pixel", resp.GetPixel())
 			frame = resp.GetFrame()
@@ -88,7 +97,7 @@ func (c *captureCmd) run(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return fmt.Errorf("could not write image to %s: %w", outfile, err)
 		}
-		slog.Info("wrote iamge for to file", "filename", outfile)
+		slog.Info("wrote image for to file", "filename", outfile)
 	}
 	return nil
 }
@@ -105,13 +114,22 @@ func (c *captureCmd) Cmd() *cobra.Command {
 		&c.portArg, "port", 8300, "The port to start the service listening on.")
 
 	cmd.Flags().StringArrayVar(
-		&c.cameras, "cameras", []string{}, "A list of cameras to capture iamges from or leave empty to capture on all.")
+		&c.cameras, "cameras", []string{}, "A list of cameras to capture images from or leave empty to capture on all.")
 
 	cmd.Flags().BoolVar(
 		&c.analyze, "analyze", false, "Whether to analyze the image for HSV ranges.")
 
 	cmd.Flags().Int32Var(
 		&c.exposure, "exposure", 0, "Exposure time in microseconds.")
+
+	cmd.Flags().Int32Var(
+		&c.width, "width", 0, "Image width in pixels.")
+
+	cmd.Flags().Int32Var(
+		&c.height, "height", 0, "Image height in pixels.")
+
+	cmd.Flags().Int32Var(
+		&c.whiteBalance, "white-balance", 0, "White balance temperature in Kelvin.")
 
 	return cmd
 }
