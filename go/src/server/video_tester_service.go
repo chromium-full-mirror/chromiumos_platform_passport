@@ -7,8 +7,10 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 
 	"go.chromium.org/chromiumos/config/go/test/lab/api/passport"
 	"google.golang.org/grpc/codes"
@@ -18,36 +20,30 @@ import (
 // videoTesterServiceServer implements the passport.VideoTesterServiceServer interface.
 // It manages a collection of VideoTesterPlugin implementations.
 type videoTesterServiceServer struct {
+	mu sync.RWMutex
 	// testerMap is a map of video tester IDs to their corresponding VideoTesterPlugin.
 	testerMap map[string]VideoTesterPlugin
-	// plugins is a slice of registered VideoTesterPlugin implementations.
+	// plugins is a slice of initialized VideoTesterPlugin implementations.
 	plugins []VideoTesterPlugin
 }
 
 // newVideoTesterServiceServer creates a new instance of videoTesterServiceServer.
-// It initializes the registered VideoTesterPlugins.
+// It initializes the registered VideoTesterPlugins without mutating the package-global slice.
 func newVideoTesterServiceServer(
 	ctx context.Context,
 ) (passport.VideoTesterServiceServer, error) {
-	// Iterate through the globally registered video tester plugins.
-	i := 0
+	plugins := make([]VideoTesterPlugin, 0, len(videoTesterPlugins))
 	for _, elem := range videoTesterPlugins {
-		// Initialize each plugin. If initialization fails, log an error and skip the plugin.
 		if err := elem.Init(); err != nil {
 			slog.Error("Failed to initialize tester", slog.Any("err", err))
 			continue
 		}
-		// If initialization is successful, keep the plugin in the slice.
-		videoTesterPlugins[i] = elem
-		i++
+		plugins = append(plugins, elem)
 	}
-	// Trim the slice of plugins to only include the successfully initialized ones.
-	videoTesterPlugins = videoTesterPlugins[:i]
 
-	// Create and return a new videoTesterServiceServer instance.
 	s := &videoTesterServiceServer{
 		testerMap: make(map[string]VideoTesterPlugin),
-		plugins:   videoTesterPlugins,
+		plugins:   plugins,
 	}
 
 	return s, nil
@@ -59,370 +55,329 @@ func (s *videoTesterServiceServer) GetVideoTesters(
 	ctx context.Context,
 	req *passport.GetVideoTestersRequest,
 ) (*passport.GetVideoTestersResponse, error) {
-	// Log the received request for debugging purposes.
 	slog.Info("Received passport.GetTestersRequest", "req", req)
 
-	// Refresh the list of available testers by querying all plugins.
 	testers, err := s.refreshTesters(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to refresh testers: %w", err)
 	}
 
-	// Return the list of video testers in the gRPC response.
 	return &passport.GetVideoTestersResponse{
 		Testers: testers,
 	}, nil
 }
 
 // refreshTesters queries all registered VideoTesterPlugins for their available testers.
-// It aggregates the results and checks for duplicate tester IDs.
+// It aggregates the results, checks for duplicate tester IDs, and merges discovered
+// testers from all healthy plugins into s.testerMap even if another plugin fails.
 func (s *videoTesterServiceServer) refreshTesters(
 	ctx context.Context,
 	req *passport.GetVideoTestersRequest,
 ) ([]*passport.VideoTester, error) {
-	// Create a map to store tester IDs and the plugin they belong to, to detect duplicates.
 	testerMap := make(map[string]VideoTesterPlugin)
-	// Create a slice to store the aggregated list of video testers.
+	duplicateIDs := make(map[string]VideoTesterPlugin)
 	var testers []*passport.VideoTester
+	var errs []error
 
-	// Iterate through all registered video tester plugins.
 	for _, plugin := range s.plugins {
-		// Call the GetVideoTesters method of the current plugin.
 		resp, err := plugin.GetVideoTesters(ctx, req)
-
-		// If there's an error while getting testers from a plugin, log it and return the error.
 		if err != nil {
-			return nil, fmt.Errorf(
-				"failed to get testers for plugin %q: %w",
-				plugin.Name(),
-				err,
+			slog.Error(
+				"Failed to get testers for plugin",
+				"plugin", plugin.Name(),
+				slog.Any("err", err),
 			)
+			errs = append(
+				errs,
+				fmt.Errorf(
+					"failed to get testers for plugin %q: %w",
+					plugin.Name(),
+					err,
+				),
+			)
+			continue
 		}
 
-		// Iterate through the testers returned by the current plugin.
 		for _, sw := range resp.GetTesters() {
-			// Get the unique ID of the tester.
 			id := sw.GetId()
-			// If a tester ID is empty, return an error.
 			if id == "" {
-				return nil, fmt.Errorf(
-					"received empty tester ID, plugin: %q",
-					plugin.Name(),
+				errs = append(
+					errs,
+					fmt.Errorf(
+						"received empty tester ID, plugin: %q",
+						plugin.Name(),
+					),
 				)
+				continue
 			}
 
-			// Check if a tester with the same ID has already been encountered.
+			if pFirst, dup := duplicateIDs[id]; dup {
+				errs = append(
+					errs,
+					fmt.Errorf(
+						"received duplicate tester ID: %q, plugin1 %q, plugin2 %q",
+						id,
+						pFirst.Name(),
+						plugin.Name(),
+					),
+				)
+				continue
+			}
+
 			if pOld, ok := testerMap[id]; ok {
-				return nil, fmt.Errorf(
-					"received duplicate tester ID: %q, plugin1 %q, plugin2 %q",
-					id,
-					pOld.Name(),
-					plugin.Name(),
+				duplicateIDs[id] = pOld
+				delete(testerMap, id)
+				errs = append(
+					errs,
+					fmt.Errorf(
+						"received duplicate tester ID: %q, plugin1 %q, plugin2 %q",
+						id,
+						pOld.Name(),
+						plugin.Name(),
+					),
 				)
+				continue
 			}
 
-			// Add the current tester to the list and record its plugin in the map.
 			testers = append(testers, sw)
 			testerMap[id] = plugin
 		}
 	}
 
-	// Log the number of testers found.
 	slog.Info("Found testers", "testers", testers)
-	// Update the server's internal map of tester IDs to plugins.
-	s.testerMap = testerMap
+	// Merge discovered tester IDs into the server's internal map under write lock
+	// so concurrent RPCs, partial plugin failures, and temporary USB
+	// re-enumerations do not lose mappings from healthy plugins.
+	s.mu.Lock()
+	if s.testerMap == nil {
+		s.testerMap = make(map[string]VideoTesterPlugin, len(testerMap))
+	}
+	for id := range duplicateIDs {
+		delete(s.testerMap, id)
+	}
+	for id, plugin := range testerMap {
+		s.testerMap[id] = plugin
+	}
+	s.mu.Unlock()
+	if len(errs) > 0 {
+		return testers, errors.Join(errs...)
+	}
 	return testers, nil
 }
 
+// getTester looks up the VideoTesterPlugin for a given tester ID, performing
+// a lazy refreshTesters pass on cache miss before returning NotFound or
+// Unavailable if a plugin refresh failed.
+func (s *videoTesterServiceServer) getTester(
+	ctx context.Context,
+	id string,
+) (VideoTesterPlugin, error) {
+	s.mu.RLock()
+	tester := s.testerMap[id]
+	s.mu.RUnlock()
+	if tester != nil {
+		return tester, nil
+	}
+
+	_, refreshErr := s.refreshTesters(ctx, &passport.GetVideoTestersRequest{})
+
+	s.mu.RLock()
+	tester = s.testerMap[id]
+	s.mu.RUnlock()
+	if tester != nil {
+		return tester, nil
+	}
+	if refreshErr != nil {
+		return nil, status.Errorf(
+			codes.Unavailable,
+			"failed to refresh testers while looking up id %s: %v",
+			id,
+			refreshErr,
+		)
+	}
+	return nil, status.Errorf(
+		codes.NotFound,
+		"there is no tester with id: %s",
+		id,
+	)
+}
+
 // OpenVideoTester handles the OpenVideoTester gRPC request.
-// It calls the OpenVideoTester method of the corresponding plugin.
 func (s *videoTesterServiceServer) OpenVideoTester(
 	ctx context.Context,
 	req *passport.OpenVideoTesterRequest,
 ) (*passport.OpenVideoTesterResponse, error) {
-	// Look up the plugin associated with the requested tester ID.
-	tester := s.testerMap[req.Id]
-	// If no plugin is found for the given ID, return a NotFound error.
-	if tester == nil {
-		return nil, status.Errorf(
-			codes.NotFound,
-			fmt.Sprintf("there is no tester with id: %s", req.Id),
-		)
+	tester, err := s.getTester(ctx, req.Id)
+	if err != nil {
+		return nil, err
 	}
-
-	// Call the OpenVideoTester method of the found plugin.
 	return tester.OpenVideoTester(ctx, req)
 }
 
 // CloseVideoTester handles the CloseVideoTester gRPC request.
-// It calls the CloseVideoTester method of the corresponding plugin.
 func (s *videoTesterServiceServer) CloseVideoTester(
 	ctx context.Context,
 	req *passport.CloseVideoTesterRequest,
 ) (*passport.CloseVideoTesterResponse, error) {
-	// Look up the plugin associated with the requested tester ID.
-	tester := s.testerMap[req.Id]
-	// If no plugin is found for the given ID, return a NotFound error.
-	if tester == nil {
-		return nil, status.Errorf(
-			codes.NotFound,
-			fmt.Sprintf("there is no tester with id: %s", req.Id),
-		)
+	tester, err := s.getTester(ctx, req.Id)
+	if err != nil {
+		return nil, err
 	}
-
-	// Call the CloseVideoTester method of the found plugin.
 	return tester.CloseVideoTester(ctx, req)
 }
 
 // GetRolesVideoTester handles the GetRolesVideoTester gRPC request.
-// It calls the GetRolesVideoTester method of the corresponding plugin.
 func (s *videoTesterServiceServer) GetRolesVideoTester(
 	ctx context.Context,
 	req *passport.GetRolesRequest,
 ) (*passport.GetRolesResponse, error) {
-	// Look up the plugin associated with the requested tester ID.
-	tester := s.testerMap[req.Id]
-	// If no plugin is found for the given ID, return a NotFound error.
-	if tester == nil {
-		return nil, status.Errorf(
-			codes.NotFound,
-			fmt.Sprintf("there is no tester with id: %s", req.Id),
-		)
+	tester, err := s.getTester(ctx, req.Id)
+	if err != nil {
+		return nil, err
 	}
-
-	// Call the GetRolesVideoTester method of the found plugin.
 	return tester.GetRolesVideoTester(ctx, req)
 }
 
 // SetRoleVideoTester handles the SetRoleVideoTester gRPC request.
-// It calls the SetRoleVideoTester method of the corresponding plugin.
 func (s *videoTesterServiceServer) SetRoleVideoTester(
 	ctx context.Context,
 	req *passport.SetRoleRequest,
 ) (*passport.SetRoleResponse, error) {
-	// Look up the plugin associated with the requested tester ID.
-	tester := s.testerMap[req.Id]
-	// If no plugin is found for the given ID, return a NotFound error.
-	if tester == nil {
-		return nil, status.Errorf(
-			codes.NotFound,
-			fmt.Sprintf("there is tester with id: %s", req.Id),
-		)
+	tester, err := s.getTester(ctx, req.Id)
+	if err != nil {
+		return nil, err
 	}
-
-	// Call the SetRoleVideoTester method of the found plugin.
 	return tester.SetRoleVideoTester(ctx, req)
 }
 
 // LoadEdidVideoTester handles the LoadEdidVideoTester gRPC request.
-// It calls the LoadEdidVideoTester method of the corresponding plugin.
 func (s *videoTesterServiceServer) LoadEdidVideoTester(
 	ctx context.Context,
 	req *passport.LoadEdidVideoTesterRequest,
 ) (*passport.LoadEdidVideoTesterResponse, error) {
-	// Look up the plugin associated with the requested tester ID.
-	tester := s.testerMap[req.Id]
-	// If no plugin is found for the given ID, return a NotFound error.
-	if tester == nil {
-		return nil, status.Errorf(
-			codes.NotFound,
-			fmt.Sprintf("there is no tester with id: %s", req.Id),
-		)
+	tester, err := s.getTester(ctx, req.Id)
+	if err != nil {
+		return nil, err
 	}
-
-	// Call the LoadEdidVideoTester method of the found plugin.
 	return tester.LoadEdidVideoTester(ctx, req)
 }
 
 // GetStreamInfoVideoTester handles the GetStreamInfoVideoTester gRPC request.
-// It calls the GetStreamInfoVideoTester method of the corresponding plugin.
 func (s *videoTesterServiceServer) GetStreamInfoVideoTester(
 	ctx context.Context,
 	req *passport.GetStreamInfoVideoTesterRequest,
 ) (*passport.GetStreamInfoVideoTesterResponse, error) {
-	// Look up the plugin associated with the requested tester ID.
-	tester := s.testerMap[req.Id]
-	// If no plugin is found for the given ID, return a NotFound error.
-	if tester == nil {
-		return nil, status.Errorf(
-			codes.NotFound,
-			fmt.Sprintf("there is no tester with id: %s", req.Id),
-		)
+	tester, err := s.getTester(ctx, req.Id)
+	if err != nil {
+		return nil, err
 	}
-
-	// Call the GetStreamInfoVideoTester method of the found plugin.
 	return tester.GetStreamInfoVideoTester(ctx, req)
 }
 
 // ScreenshotVideoTester handles the ScreenshotVideoTester gRPC request.
-// It calls the ScreenshotVideoTester method of the corresponding plugin.
 func (s *videoTesterServiceServer) ScreenshotVideoTester(
 	ctx context.Context,
 	req *passport.ScreenshotVideoTesterRequest,
 ) (*passport.ScreenshotVideoTesterResponse, error) {
-	// Look up the plugin associated with the requested tester ID.
-	tester := s.testerMap[req.Id]
-	// If no plugin is found for the given ID, return a NotFound error.
-	if tester == nil {
-		return nil, status.Errorf(
-			codes.NotFound,
-			fmt.Sprintf("there is no tester with id: %s", req.Id),
-		)
+	tester, err := s.getTester(ctx, req.Id)
+	if err != nil {
+		return nil, err
 	}
-
-	// Call the ScreenshotVideoTester method of the found plugin.
 	return tester.ScreenshotVideoTester(ctx, req)
 }
 
 // SetLinkVideoTester handles the SetLinkVideoTester gRPC request.
-// It calls the SetLinkVideoTester method of the corresponding plugin.
 func (s *videoTesterServiceServer) SetLinkVideoTester(
 	ctx context.Context,
 	req *passport.SetLinkVideoTesterRequest,
 ) (*passport.SetLinkVideoTesterResponse, error) {
-	// Look up the plugin associated with the requested tester ID.
-	tester := s.testerMap[req.Id]
-	// If no plugin is found for the given ID, return a NotFound error.
-	if tester == nil {
-		return nil, status.Errorf(
-			codes.NotFound,
-			fmt.Sprintf("there is no tester with id: %s", req.Id),
-		)
+	tester, err := s.getTester(ctx, req.Id)
+	if err != nil {
+		return nil, err
 	}
-
-	// Call the SetLinkVideoTester method of the found plugin.
 	return tester.SetLinkVideoTester(ctx, req)
 }
 
 // GetLinkVideoTester handles the GetLinkVideoTester gRPC request.
-// It calls the GetLinkVideoTester method of the corresponding plugin.
 func (s *videoTesterServiceServer) GetLinkVideoTester(
 	ctx context.Context,
 	req *passport.GetLinkVideoTesterRequest,
 ) (*passport.GetLinkVideoTesterResponse, error) {
-	// Look up the plugin associated with the requested tester ID.
-	tester := s.testerMap[req.Id]
-	// If no plugin is found for the given ID, return a NotFound error.
-	if tester == nil {
-		return nil, status.Errorf(
-			codes.NotFound,
-			fmt.Sprintf("there is no tester with id: %s", req.Id),
-		)
+	tester, err := s.getTester(ctx, req.Id)
+	if err != nil {
+		return nil, err
 	}
-
-	// Call the GetLinkVideoTester method of the found plugin.
 	return tester.GetLinkVideoTester(ctx, req)
 }
 
 // AttachVideoTester handles the AttachVideoTester gRPC request.
-// It calls the AttachVideoTester method of the corresponding plugin.
 func (s *videoTesterServiceServer) AttachVideoTester(
 	ctx context.Context,
 	req *passport.AttachVideoTesterRequest,
 ) (*passport.AttachVideoTesterResponse, error) {
-	// Look up the plugin associated with the requested tester ID.
-	tester := s.testerMap[req.Id]
-	// If no plugin is found for the given ID, return a NotFound error.
-	if tester == nil {
-		return nil, status.Errorf(
-			codes.NotFound,
-			fmt.Sprintf("there is no tester with id: %s", req.Id),
-		)
+	tester, err := s.getTester(ctx, req.Id)
+	if err != nil {
+		return nil, err
 	}
-
-	// Call the AttachVideoTester method of the found plugin.
 	return tester.AttachVideoTester(ctx, req)
 }
 
-// Sends an HPD (Hot Plug Detect) pulse to a video tester.
-// It calls the HpdPulseVideoTester method of the corresponding plugin.
+// HpdPulseVideoTester sends an HPD (Hot Plug Detect) pulse to a video tester.
 func (s *videoTesterServiceServer) HpdPulseVideoTester(
 	ctx context.Context,
 	req *passport.HpdPulseVideoTesterRequest,
 ) (*passport.HpdPulseVideoTesterResponse, error) {
-	// Look up the plugin associated with the requested tester ID.
-	tester := s.testerMap[req.Id]
-	// If no plugin is found for the given ID, return a NotFound error.
-	if tester == nil {
-		return nil, status.Errorf(
-			codes.NotFound,
-			fmt.Sprintf("there is no tester with id: %s", req.Id),
-		)
+	tester, err := s.getTester(ctx, req.Id)
+	if err != nil {
+		return nil, err
 	}
-
-	// Call the AttachVideoTester method of the found plugin.
 	return tester.HpdPulseVideoTester(ctx, req)
 }
 
-// Runs compliance test(s).
+// RunComplianceTest runs compliance test(s) on the requested video tester.
 func (s *videoTesterServiceServer) RunComplianceTest(
 	ctx context.Context,
 	req *passport.RunComplianceTestRequest,
 ) (*passport.RunComplianceTestResponse, error) {
-	// Look up the plugin associated with the requested tester ID.
-	tester := s.testerMap[req.Id]
-	// If no plugin is found for the given ID, return a NotFound error.
-	if tester == nil {
-		return nil, status.Errorf(
-			codes.NotFound,
-			fmt.Sprintf("there is no tester with id: %s", req.Id),
-		)
+	tester, err := s.getTester(ctx, req.Id)
+	if err != nil {
+		return nil, err
 	}
-
-	// Call the AttachVideoTester method of the found plugin.
 	return tester.RunComplianceTest(ctx, req)
 }
 
-// Runs StartEventCapture.
+// StartEventCapture starts event capture on the requested video tester.
 func (s *videoTesterServiceServer) StartEventCapture(
 	ctx context.Context,
 	req *passport.StartEventCaptureRequest,
 ) (*passport.StartEventCaptureResponse, error) {
-
-	if tester, ok := s.testerMap[req.Id]; ok {
-		// Call the StartEventCapture method of the found plugin.
-		return tester.StartEventCapture(ctx, req)
+	tester, err := s.getTester(ctx, req.Id)
+	if err != nil {
+		return nil, err
 	}
-
-	// If no plugin is found for the given ID, return a NotFound error.
-	return nil, status.Errorf(
-		codes.NotFound,
-		fmt.Sprintf("there is no tester with id: %s", req.Id),
-	)
+	return tester.StartEventCapture(ctx, req)
 }
 
-// Runs StopEventCapture.
+// StopEventCapture stops event capture on the requested video tester.
 func (s *videoTesterServiceServer) StopEventCapture(
 	ctx context.Context,
 	req *passport.StopEventCaptureRequest,
 ) (*passport.StopEventCaptureResponse, error) {
-
-	if tester, ok := s.testerMap[req.Id]; ok {
-		// Call the StartEventCapture method of the found plugin.
-		return tester.StopEventCapture(ctx, req)
+	tester, err := s.getTester(ctx, req.Id)
+	if err != nil {
+		return nil, err
 	}
-
-	// If no plugin is found for the given ID, return a NotFound error.
-	return nil, status.Errorf(
-		codes.NotFound,
-		fmt.Sprintf("there is no tester with id: %s", req.Id),
-	)
+	return tester.StopEventCapture(ctx, req)
 }
 
-// Runs PowerCycle.
+// PowerCycle power cycles the requested video tester.
 func (s *videoTesterServiceServer) PowerCycle(
 	ctx context.Context,
 	req *passport.PowerCycleRequest,
 ) (*passport.PowerCycleResponse, error) {
-
-	if tester, ok := s.testerMap[req.Id]; ok {
-		// Call the PowerCycle method of the found plugin.
-		return tester.PowerCycle(ctx, req)
+	tester, err := s.getTester(ctx, req.Id)
+	if err != nil {
+		return nil, err
 	}
-
-	// If no plugin is found for the given ID, return a NotFound error.
-	return nil, status.Errorf(
-		codes.NotFound,
-		fmt.Sprintf("there is no tester with id: %s", req.Id),
-	)
+	return tester.PowerCycle(ctx, req)
 }
