@@ -41,7 +41,7 @@ from utils import log_functionality
 
 # pylint: enable=import-error
 
-_DEFAULT_LOCK_TIMEOUT_SEC = 60.0
+_DEFAULT_LOCK_TIMEOUT_SEC = 90.0
 
 
 def rsetattr(obj, attr, val):
@@ -61,8 +61,9 @@ def _get_lock_timeout(self, args, kwargs) -> tuple[Any, float]:
     context = kwargs.get("context")
     if context is None and len(args) >= 2:
         context = args[1]
-    default_timeout = getattr(
-        self, "_LOCK_TIMEOUT_SEC", _DEFAULT_LOCK_TIMEOUT_SEC
+    default_timeout = min(
+        float(getattr(self, "_LOCK_TIMEOUT_SEC", _DEFAULT_LOCK_TIMEOUT_SEC)),
+        threading.TIMEOUT_MAX,
     )
     time_remaining_fn = getattr(context, "time_remaining", None)
     if callable(time_remaining_fn):
@@ -73,10 +74,10 @@ def _get_lock_timeout(self, args, kwargs) -> tuple[Any, float]:
                 and not isinstance(remaining, bool)
                 and math.isfinite(remaining)
             ):
-                return context, max(0.0, float(remaining))
+                return context, min(default_timeout, max(0.0, float(remaining)))
         except Exception:  # pylint: disable=broad-except
             pass
-    return context, float(default_timeout)
+    return context, default_timeout
 
 
 def synchronized(func):

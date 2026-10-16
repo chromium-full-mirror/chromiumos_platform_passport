@@ -129,6 +129,7 @@ from chromiumos.test.lab.api.passport import (
     video_tester_service_pb2 as video_pb2,
 )
 import grpc
+from ucd import server as ucd_server
 from ucd import ucd422
 from ucd import ucd500
 import UniTAP
@@ -1308,6 +1309,37 @@ class TestUcd500Server(unittest.TestCase):
         finally:
             release_lock.set()
             holder.join(timeout=2.0)
+
+    def test_synchronized_lock_timeout_caps_gpr_inf_future_deadline(
+        self,
+    ) -> None:
+        """Verifies unset gRPC deadline (gpr_inf_future) does not overflow."""
+        self.assertIsInstance(self.server._lock, type(threading.RLock()))
+        self.assertEqual(self.server._LOCK_TIMEOUT_SEC, 90.0)
+        self.mock_tsilib.get_list_of_available_devices.return_value = [
+            f"0: UCD-500 [{FAKE_SERIAL}]"
+        ]
+
+        inf_future_ctx = mock.MagicMock()
+        # grpcio returns INT64_MAX ns (~9223372036.854776s > TIMEOUT_MAX) when
+        # a client does not set a gRPC deadline.
+        inf_future_ctx.time_remaining.return_value = 9223372036.854776
+
+        _, capped_timeout = ucd_server._get_lock_timeout(
+            self.server, (None, inf_future_ctx), {}
+        )
+        self.assertEqual(capped_timeout, 90.0)
+
+        reply = self.server.GetVideoTesters(None, inf_future_ctx)
+        self.assertEqual(len(reply.testers), 1)
+        self.assertEqual(reply.testers[0].id, FAKE_SERIAL)
+
+        short_ctx = mock.MagicMock()
+        short_ctx.time_remaining.return_value = 12.5
+        _, short_timeout = ucd_server._get_lock_timeout(
+            self.server, (None, short_ctx), {}
+        )
+        self.assertEqual(short_timeout, 12.5)
 
     def test_ucd422_server_inherits_tiered_role_selection(self) -> None:
         """Verifies Ucd422Server uses UcdServer._select_role and binds hdrx."""
