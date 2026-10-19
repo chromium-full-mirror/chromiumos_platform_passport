@@ -11,6 +11,7 @@ import os
 import sys
 import threading
 import types
+from typing import Any
 import unittest
 from unittest import mock
 import weakref
@@ -1905,18 +1906,57 @@ class TestUcd500Server(unittest.TestCase):
         self.mock_tsilib.close.assert_not_called()
         mock_usb_bounce.assert_not_called()
 
-        # Case 2: When closed and 0 devices are found, GetVideoTesters stays
-        # read-only and does not trigger USB re-enumeration.
+        # Case 2: When closed and 0 devices are found in libTSI and sysfs,
+        # GetVideoTesters stays strictly read-only and does not trigger USB
+        # re-enumeration.
         self.server.CloseVideoTester(
             video_pb2.CloseVideoTesterRequest(id=FAKE_SERIAL), self.context
         )
         self.mock_tsilib.get_list_of_available_devices.return_value = []
-        with mock.patch.object(
-            self.server, "_force_usb_reenumeration"
-        ) as mock_usb_bounce2:
+        with (
+            mock.patch.object(
+                self.server, "_force_usb_reenumeration"
+            ) as mock_usb_bounce2,
+            mock.patch.object(
+                self.server, "_scan_sysfs_matching_serials", return_value=[]
+            ),
+        ):
             resp_b = self.server.GetVideoTesters(None, self.context)
         self.assertEqual(len(resp_b.testers), 0)
         mock_usb_bounce2.assert_not_called()
+
+        # Case 2b: If libTSI returns [] while closed, GetVideoTesters stays
+        # read-only (does not bounce USB) and falls back to sysfs USB serials
+        # (idVendor 16a6, product UCD-500S) so Go's testerMap and
+        # OpenVideoTester can still route and run targeted recovery.
+        self.mock_tsilib.get_list_of_available_devices.return_value = []
+        sysfs_ucd500s_files = {
+            "/sys/bus/usb/devices/2-5/idVendor": "16a6\n",
+            "/sys/bus/usb/devices/2-5/product": "UCD-500S\n",
+            "/sys/bus/usb/devices/2-5/serial": f"{FAKE_SERIAL.lower()}\n",
+        }
+
+        def fake_open_sysfs_ucd500s(path: str, *args, **kwargs) -> Any:
+            del args, kwargs
+            if path in sysfs_ucd500s_files:
+                return mock.mock_open(read_data=sysfs_ucd500s_files[path])()
+            raise FileNotFoundError(path)
+
+        with (
+            mock.patch.object(
+                self.server, "_force_usb_reenumeration"
+            ) as mock_usb_bounce_sysfs,
+            mock.patch(
+                "ucd.server.glob.glob",
+                return_value=["/sys/bus/usb/devices/2-5/idVendor"],
+            ),
+            mock.patch("builtins.open", side_effect=fake_open_sysfs_ucd500s),
+        ):
+            resp_sysfs = self.server.GetVideoTesters(None, self.context)
+        self.assertEqual(len(resp_sysfs.testers), 1)
+        self.assertEqual(resp_sysfs.testers[0].id, FAKE_SERIAL)
+        self.assertEqual(resp_sysfs.testers[0].name, "UCD-500")
+        mock_usb_bounce_sysfs.assert_not_called()
 
         # Case 3 (Cross-plugin safety): Untargeted _force_usb_reenumeration
         # must NOT reset a USB node when product is missing or mismatches.
@@ -2271,6 +2311,42 @@ class TestUcd500Server(unittest.TestCase):
             any("Failed to configure PDC DP Alt Mode" in m for m in cm.output)
         )
 
+    def test_force_usb_reenumeration_16a6_and_case_insensitive_serial(
+        self,
+    ) -> None:
+        """Verifies _force_usb_reenumeration matches 16a6 and lowercase IDs."""
+        ucd500s_files = {
+            "/sys/bus/usb/devices/2-5/idVendor": "16a6\n",
+            "/sys/bus/usb/devices/2-5/serial": "2541C665\n",
+            "/sys/bus/usb/devices/2-5/product": "UCD-500S\n",
+            "/sys/bus/usb/devices/2-5/busnum": "2\n",
+            "/sys/bus/usb/devices/2-5/devnum": "5\n",
+        }
+
+        def fake_open_16a6(path: str, *args, **kwargs) -> Any:
+            del args, kwargs
+            if path in ucd500s_files:
+                return mock.mock_open(read_data=ucd500s_files[path])()
+            raise FileNotFoundError(path)
+
+        with (
+            mock.patch("ucd.server.time.sleep"),
+            mock.patch(
+                "ucd.server.glob.glob",
+                return_value=["/sys/bus/usb/devices/2-5/serial"],
+            ),
+            mock.patch("builtins.open", side_effect=fake_open_16a6),
+            mock.patch("ucd.server.os.open", return_value=77) as mock_open_16a6,
+            mock.patch("ucd.server.os.close"),
+            mock.patch("ucd.server.fcntl.ioctl") as mock_ioctl_16a6,
+        ):
+            self.assertTrue(self.server._force_usb_reenumeration("2541c665"))
+            mock_open_16a6.assert_called_once_with(
+                "/dev/bus/usb/002/005", os.O_WRONLY
+            )
+            mock_ioctl_16a6.assert_called_once_with(77, 21780, 0)
+
 
 if __name__ == "__main__":
     unittest.main()
+

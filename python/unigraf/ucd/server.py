@@ -159,6 +159,7 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
     _USB_REENUMERATION_SETTLE_SEC = 2.0
     _POWER_CYCLE_POLL_INTERVAL_SEC = 2.0
     _POWER_CYCLE_MAX_POLL_ATTEMPTS = 10
+    _UNIGRAF_USB_VENDOR_IDS = ("16a6", "1992")
 
     @log_functionality.logger
     def __init__(self, device_name):
@@ -679,17 +680,21 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
 
         attempted_dirs: set[str] = set()
         if serial_number:
+            target_serial = serial_number.strip().upper()
             for sys_path in glob.glob("/sys/bus/usb/devices/*/serial"):
                 try:
                     dev_dir = self._resolve_usb_dev_dir(sys_path)
                     serial_path = os.path.join(dev_dir, "serial")
                     with open(serial_path, "r", encoding="utf-8") as f:
-                        if f.read().strip() != serial_number:
+                        if f.read().strip().upper() != target_serial:
                             continue
                     vendor_path = os.path.join(dev_dir, "idVendor")
                     try:
                         with open(vendor_path, "r", encoding="utf-8") as f_ven:
-                            if f_ven.read().strip().lower() != "1992":
+                            if (
+                                f_ven.read().strip().lower()
+                                not in self._UNIGRAF_USB_VENDOR_IDS
+                            ):
                                 continue
                     except OSError:
                         pass
@@ -714,7 +719,10 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
                     continue
                 vendor_path = os.path.join(dev_dir, "idVendor")
                 with open(vendor_path, "r", encoding="utf-8") as f_ven:
-                    if f_ven.read().strip().lower() != "1992":
+                    if (
+                        f_ven.read().strip().lower()
+                        not in self._UNIGRAF_USB_VENDOR_IDS
+                    ):
                         continue
 
                 if serial_number:
@@ -722,7 +730,11 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
                     try:
                         with open(serial_path, "r", encoding="utf-8") as f_ser:
                             dev_serial = f_ser.read().strip()
-                        if dev_serial and dev_serial != serial_number:
+                        if (
+                            dev_serial
+                            and dev_serial.upper()
+                            != serial_number.strip().upper()
+                        ):
                             continue
                     except OSError:
                         pass
@@ -764,6 +776,41 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
                 self._device_name,
             )
         return False
+
+    def _scan_sysfs_matching_serials(self) -> list[str]:
+        """Scans sysfs USB devices for matching Unigraf model serials."""
+        target_model = self._device_name.replace("-", "").lower()
+        serials: list[str] = []
+        seen_dirs: set[str] = set()
+        for sys_path in glob.glob("/sys/bus/usb/devices/*/idVendor"):
+            try:
+                dev_dir = self._resolve_usb_dev_dir(sys_path)
+                if dev_dir in seen_dirs:
+                    continue
+                seen_dirs.add(dev_dir)
+                vendor_path = os.path.join(dev_dir, "idVendor")
+                with open(vendor_path, "r", encoding="utf-8") as f_ven:
+                    if (
+                        f_ven.read().strip().lower()
+                        not in self._UNIGRAF_USB_VENDOR_IDS
+                    ):
+                        continue
+                product_path = os.path.join(dev_dir, "product")
+                with open(product_path, "r", encoding="utf-8") as f_prod:
+                    product = f_prod.read().strip()
+                if (
+                    not product
+                    or target_model not in product.replace("-", "").lower()
+                ):
+                    continue
+                serial_path = os.path.join(dev_dir, "serial")
+                with open(serial_path, "r", encoding="utf-8") as f_ser:
+                    dev_serial = f_ser.read().strip().upper()
+                if dev_serial and dev_serial not in serials:
+                    serials.append(dev_serial)
+            except OSError:
+                continue
+        return serials
 
     def _hard_reset_and_reopen(self, serial: str) -> None:
         """Executes in-band NIOS reset, bounces USB, and polls until reopen."""
@@ -970,6 +1017,21 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
         if self._dev is None:
             self._rescan_devices()
         testers = self._scan_matching_testers(context)
+        if not testers and self._dev is None:
+            for serial in self._scan_sysfs_matching_serials():
+                logging.warning(
+                    "libTSI returned 0 %s testers; falling back to"
+                    " read-only sysfs USB serial %s so OpenVideoTester"
+                    " can run targeted recovery.",
+                    self._device_name,
+                    serial,
+                )
+                testers.append(
+                    video_pb2.VideoTester(
+                        id=serial,
+                        name=self._device_name.upper(),
+                    )
+                )
         if (
             self._dev is not None
             and self._serial
