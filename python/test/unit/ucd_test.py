@@ -2207,6 +2207,70 @@ class TestUcd500Server(unittest.TestCase):
         self.assertEqual(mst_info_resp.streams[1].bpp, 0)
         self.mock_port_rx.link.status.stream.side_effect = None
 
+    def test_set_link_video_tester_2_lane_mode(self) -> None:
+        """Verifies SetLinkVideoTester with max_lane=2 sets 2-lane mode."""
+        self._open_and_set_role()
+        caps = self.mock_port_rx.link.capabilities.link_caps_status.return_value
+        dpam_mock = self.mock_role.pdcrx.dp_alt_mode
+        pin_caps = mock.MagicMock()
+        dpam_mock.ufp_caps = pin_caps
+
+        req = video_pb2.SetLinkVideoTesterRequest(id=FAKE_SERIAL, max_lane=2)
+        reply = self.server.SetLinkVideoTester(req, self.context)
+
+        self.assertIsInstance(reply, video_pb2.SetLinkVideoTesterResponse)
+        self.assertEqual(caps.max_lane, 2)
+        self.mock_port_rx.link.capabilities.set.assert_called_once_with(caps)
+        self.assertEqual(pin_caps.c_4_lanes, False)
+        self.assertEqual(pin_caps.d_2_lanes, True)
+        self.assertEqual(pin_caps.e_4_lanes, False)
+        self.assertEqual(dpam_mock.ufp_caps, pin_caps)
+        self.assertEqual(dpam_mock.dfp_caps, pin_caps)
+        dpam_mock.multifunction_preferred.assert_called_once_with(True)
+        dpam_mock.enter_2_lane.assert_called_once()
+
+    def test_set_link_video_tester_4_lane_mode(self) -> None:
+        """Verifies SetLinkVideoTester with max_lane=4 sets 4-lane mode."""
+        self._open_and_set_role()
+        caps = self.mock_port_rx.link.capabilities.link_caps_status.return_value
+        dpam_mock = self.mock_role.pdcrx.dp_alt_mode
+        pin_caps = mock.MagicMock()
+        dpam_mock.ufp_caps = pin_caps
+
+        req = video_pb2.SetLinkVideoTesterRequest(id=FAKE_SERIAL, max_lane=4)
+        reply = self.server.SetLinkVideoTester(req, self.context)
+
+        self.assertIsInstance(reply, video_pb2.SetLinkVideoTesterResponse)
+        self.assertEqual(caps.max_lane, 4)
+        self.mock_port_rx.link.capabilities.set.assert_called_once_with(caps)
+        self.assertEqual(pin_caps.c_4_lanes, True)
+        self.assertEqual(pin_caps.d_2_lanes, True)
+        self.assertEqual(pin_caps.e_4_lanes, False)
+        self.assertEqual(dpam_mock.ufp_caps, pin_caps)
+        self.assertEqual(dpam_mock.dfp_caps, pin_caps)
+        dpam_mock.multifunction_preferred.assert_called_once_with(False)
+        dpam_mock.enter_4_lane.assert_called_once()
+
+    def test_set_link_video_tester_pdc_error_logs_warning_and_succeeds(
+        self,
+    ) -> None:
+        """Verifies SetLinkVideoTester succeeds if PDC DP Alt Mode raises."""
+        self._open_and_set_role()
+        caps = self.mock_port_rx.link.capabilities.link_caps_status.return_value
+        dpam_mock = self.mock_role.pdcrx.dp_alt_mode
+        dpam_mock.enter_2_lane.side_effect = RuntimeError("PDC timeout")
+
+        req = video_pb2.SetLinkVideoTesterRequest(id=FAKE_SERIAL, max_lane=2)
+        with self.assertLogs(level="WARNING") as cm:
+            reply = self.server.SetLinkVideoTester(req, self.context)
+
+        self.assertIsInstance(reply, video_pb2.SetLinkVideoTesterResponse)
+        self.assertEqual(caps.max_lane, 2)
+        self.mock_port_rx.link.capabilities.set.assert_called_once_with(caps)
+        self.assertTrue(
+            any("Failed to configure PDC DP Alt Mode" in m for m in cm.output)
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

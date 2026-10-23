@@ -118,7 +118,48 @@ class Ucd500Server(server.UcdServer):
 
         self._role.dprx.link.capabilities.set(caps)
 
+        if request.HasField("max_lane"):
+            self._configure_pdc_dp_alt_mode_lanes(request.max_lane)
+
         return video_pb2.SetLinkVideoTesterResponse()
+
+    def _configure_pdc_dp_alt_mode_lanes(self, max_lane: int) -> None:
+        """Configures the USB-C PDC DP Alt Mode pin assignment for 2 or 4 lanes.
+
+        When max_lane is 2, configures Type-C Pin Assignment D (2 DP lanes +
+        2 USB3 SuperSpeed lanes) with Multi-Function Preferred enabled. When
+        max_lane is 4, configures Pin Assignment C (4 DP lanes) with
+        Multi-Function Preferred disabled.
+        """
+        if (
+            max_lane not in (2, 4)
+            or not isinstance(self._role, UniTAP.dev.UCD500.USBCSourceUSBCSink)
+            or self._role.pdcrx is None
+        ):
+            return
+
+        is_two_lane = max_lane == 2
+        try:
+            dpam = self._role.pdcrx.dp_alt_mode
+            pin_caps = dpam.ufp_caps
+            pin_caps.c_4_lanes = not is_two_lane
+            pin_caps.d_2_lanes = True
+            pin_caps.e_4_lanes = False
+            # UniTAP's DPAMCaps.value() shifts dfp_assign into both the
+            # DFP and UFP bitfields, so both properties must be set.
+            dpam.ufp_caps = pin_caps
+            dpam.dfp_caps = pin_caps
+            dpam.multifunction_preferred(is_two_lane)
+            if is_two_lane:
+                dpam.enter_2_lane()
+            else:
+                dpam.enter_4_lane()
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logging.warning(
+                "Failed to configure PDC DP Alt Mode for %d lanes: %s",
+                max_lane,
+                e,
+            )
 
     @server.synchronized
     @log_functionality.logger
