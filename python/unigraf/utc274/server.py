@@ -161,7 +161,10 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
 
             ret = 0
             curr_value = get_f()
-            if curr_value != val:
+            if (
+                attr == usb_tester_service_pb2.PIN_ASSIGNMENT
+                or curr_value != val
+            ):
                 logging.info("Setting %s to %s", attr, val)
                 ret = set_f(arg=val)
                 delay = self.SELECT_SAFETY_DELAY_S_FMAP.get(attr)
@@ -209,6 +212,17 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
         if request.capability == usb_tester_service_pb2.CABLE_MODE:
             return usb_tester_service_pb2.SetUsbTesterCapabilityReply(
                 err_code=0,
+            )
+
+        if (
+            request.capability == usb_tester_service_pb2.PIN_ASSIGNMENT
+            and request.pin_mode
+            == usb_tester_service_pb2.PIN_ASSIGNMENT_NOT_SET
+        ):
+            with self._device_access(request.id) as dev:
+                ret = dev.pd.reset_dp_pin_assignment()
+            return usb_tester_service_pb2.SetUsbTesterCapabilityReply(
+                err_code=ret, error_msg=("reset failed" if ret != 0 else "")
             )
 
         to_set = translate.grcp_set_val_to_sdk_set_val(request)

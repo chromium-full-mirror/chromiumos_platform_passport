@@ -201,6 +201,57 @@ class TestUnigrafServer(unittest.TestCase):
         self.mock_device.hw.load_edid.assert_called_once_with(mock_file.name)
         self.assertEqual(reply.err_code, 0)
 
+    def test_set_tester_capability_pin_assignment(self) -> None:
+        """Test setting PIN_ASSIGNMENT calls select_dp_pin_assignment."""
+        self.mock_device.pd.update_dp_pin_assignment.return_value = 0
+        self.mock_device.pd.select_dp_pin_assignment.return_value = 0
+
+        with self._open_tester_context(FAKE_SERIAL_UTC):
+            request = usb_tester_service_pb2.SetUsbTesterCapabilityRequest(
+                id=FAKE_SERIAL_UTC,
+                capability=usb_tester_service_pb2.PIN_ASSIGNMENT,
+                pin_mode=usb_tester_service_pb2.C,
+            )
+            reply = self.server.SetTesterCapability(request, None)
+
+            select_pin = self.mock_device.pd.select_dp_pin_assignment
+            select_pin.assert_called_once_with(arg=0)
+            self.assertEqual(reply.err_code, 0)
+
+    def test_set_tester_capability_reset_pin_assignment(self) -> None:
+        """Test PIN_ASSIGNMENT_NOT_SET calls reset_dp_pin_assignment."""
+        self.mock_device.pd.reset_dp_pin_assignment.return_value = 0
+
+        with self._open_tester_context(FAKE_SERIAL_UTC):
+            request = usb_tester_service_pb2.SetUsbTesterCapabilityRequest(
+                id=FAKE_SERIAL_UTC,
+                capability=usb_tester_service_pb2.PIN_ASSIGNMENT,
+                pin_mode=usb_tester_service_pb2.PIN_ASSIGNMENT_NOT_SET,
+            )
+            reply = self.server.SetTesterCapability(request, None)
+
+            reset_pin = self.mock_device.pd.reset_dp_pin_assignment
+            reset_pin.assert_called_once_with()
+            self.mock_device.pd.select_dp_pin_assignment.assert_not_called()
+            self.assertEqual(reply.err_code, 0)
+
+    def test_get_tester_capability_pin_assignment_not_set(self) -> None:
+        """Test getting PIN_ASSIGNMENT when SDK returns 3 (Unknown/Not set)."""
+        self.mock_device.pd.update_dp_pin_assignment.return_value = 3
+
+        with self._open_tester_context(FAKE_SERIAL_UTC):
+            request = usb_tester_service_pb2.GetUsbTesterCapabilityRequest(
+                id=FAKE_SERIAL_UTC,
+                capability=usb_tester_service_pb2.PIN_ASSIGNMENT,
+            )
+            reply = self.server.GetTesterCapability(request, None)
+
+            self.mock_device.pd.update_dp_pin_assignment.assert_called_once()
+            self.assertEqual(reply.err_code, 0)
+            self.assertEqual(
+                reply.pin_mode, usb_tester_service_pb2.PIN_ASSIGNMENT_NOT_SET
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
