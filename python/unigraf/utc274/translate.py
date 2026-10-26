@@ -8,12 +8,10 @@ This module translated between the SDK values used by the unigraf and the
 gRPC values.
 """
 
-from enum import Enum
+import enum
 
 # pylint: disable=import-error
 from chromiumos.test.lab.api.passport import usb_tester_service_pb2
-
-from utils import constants
 
 
 # pylint: enable=import-error
@@ -373,8 +371,9 @@ GRCP_ALERT_TO_SDK_ALERT = {
 }
 
 
-# Enum type to indicate the type of PD swaps for stats.
-class PdSwapType(Enum):
+class PdSwapType(enum.Enum):
+    """Enum type to indicate the type of PD swaps for stats."""
+
     ACCEPT = 0
     REJECT = 1
     WAIT = 2

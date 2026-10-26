@@ -94,8 +94,8 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
                 logging.info("Open devices are: %s", self._open_devices)
                 raise ProcessLookupError(f"Serial {serial} is already open.")
 
-            # Try to open the device first so in case this fails we dont populate
-            # the locks
+            # Try to open the device first so in case this fails we don't
+            # populate the locks
             dev = self._lib.open_device(serial_number=serial)
 
             self._serial_locks[serial] = threading.Lock()
@@ -162,14 +162,16 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
             ret = 0
             curr_value = get_f()
             if curr_value != val:
-                logging.info(f"Setting {attr} to {val}")
+                logging.info("Setting %s to %s", attr, val)
                 ret = set_f(arg=val)
                 delay = self.SELECT_SAFETY_DELAY_S_FMAP.get(attr)
                 if delay:
                     time.sleep(delay)
             else:
                 logging.info(
-                    f"Skipping {attr} because current val is the same as set val {val}"
+                    "Skipping %s because current val is the same as set val %s",
+                    attr,
+                    val,
                 )
 
         return ret
@@ -292,7 +294,8 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
             to_set = request.port_id + 1
 
             if active_port != to_set:
-                # TODO (b/450467364): remove this workaround when the FW fixes it.
+                # TODO (b/450467364): remove this workaround when the FW fixes
+                # it.
                 dev.dp.hpd_vdm_irq_control()
                 set_status = dev.hw.select_active_port(
                     arg=to_set,
@@ -344,7 +347,7 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
             ),
         )
 
-    def ResetPd(self, request, context):
+    def ResetPd(self, request, _context):
         """This method is used to issue power delivery resets."""
         serial = request.id
         ret = 0
@@ -352,7 +355,8 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
             if request.soft:
                 ret = dev.pd.soft_reset()
             else:
-                # TODO (b/450467364): remove this workaround when the FW fixes it.
+                # TODO (b/450467364): remove this workaround when the FW fixes
+                # it.
                 dev.dp.hpd_vdm_irq_control()
                 ret = dev.pd.hard_reset()
                 time.sleep(constants.UTC_274_STABILITY_S)
@@ -400,7 +404,7 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
             src_pdos=src_pdos,
         )
 
-    def SendVdmHpd(self, request, context):
+    def SendVdmHpd(self, request, _context):
         """This method is used send a VDM HPDs."""
 
         serial = request.id
@@ -414,7 +418,7 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
             error_msg="Failed to send vdm" if ret else "",
         )
 
-    def SimulateKeyPress(self, request, context):
+    def SimulateKeyPress(self, request, _context):
         """Simulate a key press. ATM this will simulate the "G" key press."""
         serial = request.id
         ret = 0
@@ -428,7 +432,7 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
             error_msg="Failed to simulate key G press" if ret else "",
         )
 
-    def SendPdAlert(self, request, context):
+    def SendPdAlert(self, request, _context):
         """Send a PD alert message to partner."""
         serial = request.id
         ret = 0
@@ -439,7 +443,7 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
 
         return usb_tester_service_pb2.SendPdAlertReply(err_code=ret)
 
-    def GetPdStats(self, request, context):
+    def GetPdStats(self, request, _context):
         """Get statistics about the PD requests."""
         serial = request.id
         reply = usb_tester_service_pb2.GetPdStatsReply(err_code=0)
@@ -460,7 +464,7 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
                 translate.PdSwapType.WAIT
             ]
             reply.power_role_swap_count_total = sum(
-                [v for v in power_roles_spwas_stats.values() if v > 0]
+                v for v in power_roles_spwas_stats.values() if v > 0
             )
 
             data_roles_spwas_stats = {
@@ -477,7 +481,7 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
                 translate.PdSwapType.WAIT
             ]
             reply.data_role_swap_count_total = sum(
-                [v for v in data_roles_spwas_stats.values() if v > 0]
+                v for v in data_roles_spwas_stats.values() if v > 0
             )
 
             if (
@@ -490,7 +494,7 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
 
         return reply
 
-    def ResetPdStats(self, request, context):
+    def ResetPdStats(self, request, _context):
         """Reset the PD statistics."""
         serial = request.id
         sdk_err_code = 0
@@ -505,7 +509,7 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
                 pd_dev.reset_power_role_swap_count(i.value)
                 for i in list(translate.PdSwapType)
             ]
-            sdk_err_code = min(min(data_role_resets), min(power_role_resets))
+            sdk_err_code = min(data_role_resets + power_role_resets)
 
         return usb_tester_service_pb2.GetPdStatsReply(
             err_code=sdk_err_code,
@@ -531,7 +535,8 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
                     del self._last_access_time[serial]
                 cleanup_performed = True
             except Exception as e:
-                # We still got things to clean up, put the flag to false in case anything fails.
+                # We still got things to clean up, put the flag to false in case
+                # anything fails.
                 logging.error("Failed to close device %s: %s", serial, e)
                 cleanup_performed = False
 
@@ -570,8 +575,8 @@ class UnigrafServer(usb_tester_service_pb2_grpc.UsbTesterServiceServicer):
                 raise ValueError(f"No device lock with serial {serial}")
 
         with self._serial_locks[serial]:
-            # The device could have been closed by another thread after the check
-            # and before we acquired the serial lock.
+            # The device could have been closed by another thread after the
+            # check and before we acquired the serial lock.
             dev = self._open_devices.get(serial)
             if not dev:
                 raise ValueError(f"Device {serial} was closed unexpectedly.")

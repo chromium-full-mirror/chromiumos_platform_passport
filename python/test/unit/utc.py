@@ -1,6 +1,9 @@
 # Copyright 2025 The ChromiumOS Authors
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
+
+"""Unit tests for the Unigraf UTC-274 gRPC server."""
+
 from __future__ import annotations
 
 import contextlib
@@ -9,10 +12,14 @@ from typing import Generator
 import unittest
 import unittest.mock
 
+# pylint: disable=import-error
 from chromiumos.test.lab.api.passport import usb_tester_service_pb2
 
 # Correctly import the server module and protobuf definitions
 from utc274 import server
+
+
+# pylint: enable=import-error
 
 
 # --- Constants for clarity and easy modification ---
@@ -22,6 +29,7 @@ UTC_DEVICE_NAME = "UTC-274"
 UCD_DEVICE_NAME = "UCD-500"
 
 
+# pylint: disable=protected-access
 class TestUnigrafServer(unittest.TestCase):
     """Test suite for the UnigrafServer gRPC service."""
 
@@ -29,6 +37,7 @@ class TestUnigrafServer(unittest.TestCase):
     mock_utclib_instance: unittest.mock.MagicMock
     mock_device: unittest.mock.MagicMock
 
+    # pylint: disable=arguments-differ
     @unittest.mock.patch("utc274.server.UTCLibrary.UTCLib")
     def setUp(self, mock_utclib: unittest.mock.MagicMock) -> None:
         """Set up a fresh UnigrafServer instance and mocks for each test."""
@@ -99,7 +108,7 @@ class TestUnigrafServer(unittest.TestCase):
         self.assertEqual(reply.err_code, 0)
 
     def test_open_tester_already_open_raises_error(self) -> None:
-        """Test that opening an already open tester raises ProcessLookupError."""
+        """Test opening an already open tester raises ProcessLookupError."""
         self.server._open_devices[FAKE_SERIAL_UTC] = self.mock_device
         request = usb_tester_service_pb2.OpenTesterRequest(id=FAKE_SERIAL_UTC)
 
@@ -126,7 +135,7 @@ class TestUnigrafServer(unittest.TestCase):
         self.assertEqual(reply.err_code, 0)
 
     def test_close_tester_not_open_raises_error(self) -> None:
-        """Test that closing a tester that isn't open raises ProcessLookupError."""
+        """Test closing a non-open tester raises ProcessLookupError."""
         request = usb_tester_service_pb2.CloseTesterRequest(
             id="NOT_OPEN_SERIAL"
         )
