@@ -396,3 +396,25 @@ class Ucd500Server(server.UcdServer):
 
             self._role.pdcrx.controls.reconnect()
             time.sleep(5)
+
+            fw_info = self._get_fw_info()
+            corrupted = self._get_corrupted_fw_components(fw_info, self._role)
+            if corrupted:
+                logging.warning(
+                    "UCD %s reported corrupted firmware %s after USB-PD"
+                    " quirks; resetting corrupted PD controller in place.",
+                    self._serial,
+                    fw_info,
+                )
+                self._recover_corrupted_fw_in_place(fw_info, corrupted)
+                fw_info = self._get_fw_info()
+                corrupted = self._get_corrupted_fw_components(
+                    fw_info, self._role
+                )
+                if corrupted and not self._is_benign_ux_only_corruption(
+                    fw_info, self._role
+                ):
+                    raise RuntimeError(
+                        "Corrupted UCD firmware version after USB-PD quirks:"
+                        f" {fw_info}"
+                    )

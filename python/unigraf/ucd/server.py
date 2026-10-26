@@ -198,6 +198,8 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
     _POWER_CYCLE_POLL_INTERVAL_SEC = 2.0
     _POWER_CYCLE_MAX_POLL_ATTEMPTS = 10
     _UNIGRAF_USB_VENDOR_IDS = ("16a6", "1992")
+    _PDC_RESET_POLL_INTERVAL_SEC = 0.5
+    _PDC_RESET_MAX_POLL_ATTEMPTS = 6
 
     @log_functionality.logger
     def __init__(self, device_name):
@@ -596,10 +598,8 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
                 ("PDRX", "pdcrx", "RX"),
                 ("PDTX", "pdctx", "TX"),
             )
-            reset_attempted = False
             for comp, attr, label in pd_controllers:
                 if comp in corrupted and hasattr(self._role, attr):
-                    reset_attempted = True
                     logging.warning(
                         "UCD %s reported %s: 0.0.0 (%s); resetting %s PD"
                         " controller in place.",
@@ -610,7 +610,39 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
                     )
                     try:
                         getattr(self._role, attr).controls.reset()
-                        time.sleep(1.0)
+                        for attempt in range(self._PDC_RESET_MAX_POLL_ATTEMPTS):
+                            time.sleep(self._PDC_RESET_POLL_INTERVAL_SEC)
+                            post_fw_info = self._get_fw_info()
+                            still_corrupted = (
+                                self._get_corrupted_fw_components(
+                                    post_fw_info, self._role
+                                )
+                            )
+                            if (
+                                comp not in still_corrupted
+                                and attr not in still_corrupted
+                            ):
+                                logging.info(
+                                    "UCD %s %s recovered healthy firmware after"
+                                    " %.1fs: %s",
+                                    self._serial,
+                                    attr,
+                                    (attempt + 1)
+                                    * self._PDC_RESET_POLL_INTERVAL_SEC,
+                                    post_fw_info,
+                                )
+                                break
+                        else:
+                            logging.warning(
+                                "UCD %s %s remained corrupted after %.1fs"
+                                " reset polling.",
+                                self._serial,
+                                attr,
+                                self._PDC_RESET_MAX_POLL_ATTEMPTS
+                                * self._PDC_RESET_POLL_INTERVAL_SEC,
+                            )
+                        fw_info = post_fw_info
+                        corrupted = still_corrupted
                     except Exception as e:  # pylint: disable=broad-except
                         logging.debug(
                             "Failed to reset %s on %s: %s",
@@ -618,11 +650,6 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
                             self._serial,
                             e,
                         )
-            if reset_attempted:
-                fw_info = self._get_fw_info()
-                corrupted = self._get_corrupted_fw_components(
-                    fw_info, self._role
-                )
 
         if "UX" in corrupted:
             self._flush_fx3()

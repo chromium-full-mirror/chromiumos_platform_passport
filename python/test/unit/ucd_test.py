@@ -402,6 +402,7 @@ class TestUcd500Server(unittest.TestCase):
         self.mock_io.get_prepared_fw_info.side_effect = [
             stalled_fw,
             HEALTHY_FW_INFO,
+            HEALTHY_FW_INFO,
         ]
 
         with (
@@ -468,6 +469,7 @@ class TestUcd500Server(unittest.TestCase):
         ]
         self.mock_io.get_prepared_fw_info.side_effect = [
             stalled_fw,
+            HEALTHY_FW_INFO,
             HEALTHY_FW_INFO,
         ]
 
@@ -738,6 +740,7 @@ class TestUcd500Server(unittest.TestCase):
         self.mock_io.get_prepared_fw_info.side_effect = [
             WEDGED_PD_FW_INFO,
             HEALTHY_FW_INFO,
+            HEALTHY_FW_INFO,
         ]
 
         with (
@@ -757,6 +760,102 @@ class TestUcd500Server(unittest.TestCase):
         self.mock_dev.select_role.assert_called_once()
         self.mock_tsilib.close.assert_not_called()
 
+    def test_recover_corrupted_fw_in_place_polls_until_pdrx_healthy_without_reopen(
+        self,
+    ) -> None:
+        """Verifies _recover_corrupted_fw_in_place polls up to 6 times and recovers."""
+        self.server.OpenVideoTester(
+            video_pb2.OpenVideoTesterRequest(id=FAKE_SERIAL), self.context
+        )
+        self.mock_io.get_prepared_fw_info.side_effect = [
+            WEDGED_PD_FW_INFO,
+            WEDGED_PD_FW_INFO,
+            WEDGED_PD_FW_INFO,
+            HEALTHY_FW_INFO,
+            HEALTHY_FW_INFO,
+        ]
+
+        with (
+            mock.patch("ucd.ucd500.UniTAP.OpfHandlerInternal"),
+            mock.patch("ucd.server.time.sleep") as mock_sleep,
+        ):
+            reply = self.server.SetRoleVideoTester(
+                video_pb2.SetRoleRequest(
+                    id=FAKE_SERIAL,
+                    role=video_pb2.ROLE_USBCSOURCE_USBCSINK,
+                ),
+                self.context,
+            )
+
+        self.assertTrue(reply.success)
+        self.mock_role.pdcrx.controls.reset.assert_called_once()
+        self.mock_dev.select_role.assert_called_once()
+        self.mock_tsilib.close.assert_not_called()
+        mock_sleep.assert_any_call(0.5)
+
+    def test_role_set_quirks_recovers_pdrx_wedged_after_reconnect(self) -> None:
+        """Verifies _role_set_quirks recovers PDRX wedged after reconnect."""
+        self.server.OpenVideoTester(
+            video_pb2.OpenVideoTesterRequest(id=FAKE_SERIAL), self.context
+        )
+        self.mock_io.get_prepared_fw_info.side_effect = [
+            HEALTHY_FW_INFO,
+            WEDGED_PD_FW_INFO,
+            HEALTHY_FW_INFO,
+            HEALTHY_FW_INFO,
+        ]
+
+        with (
+            mock.patch("ucd.ucd500.UniTAP.OpfHandlerInternal"),
+            mock.patch("ucd.server.time.sleep"),
+            mock.patch.object(
+                self.server,
+                "_recover_corrupted_fw_in_place",
+                wraps=self.server._recover_corrupted_fw_in_place,
+            ) as spy_recover,
+        ):
+            reply = self.server.SetRoleVideoTester(
+                video_pb2.SetRoleRequest(
+                    id=FAKE_SERIAL,
+                    role=video_pb2.ROLE_USBCSOURCE_USBCSINK,
+                ),
+                self.context,
+            )
+
+        self.assertTrue(reply.success)
+        spy_recover.assert_called_once()
+        self.mock_role.pdcrx.controls.reset.assert_called_once()
+
+    def test_role_set_quirks_raises_when_pdrx_wedged_after_reconnect_unrecoverable(
+        self,
+    ) -> None:
+        """Verifies _role_set_quirks raises RuntimeError if PDRX remains 0.0.0."""
+        self.server.OpenVideoTester(
+            video_pb2.OpenVideoTesterRequest(id=FAKE_SERIAL), self.context
+        )
+        self.mock_io.get_prepared_fw_info.side_effect = (
+            [HEALTHY_FW_INFO] + [WEDGED_PD_FW_INFO] * 8
+        )
+
+        with (
+            mock.patch("ucd.ucd500.UniTAP.OpfHandlerInternal"),
+            mock.patch("ucd.server.time.sleep"),
+            self.assertRaises(RuntimeError) as ctx,
+        ):
+            self.server.SetRoleVideoTester(
+                video_pb2.SetRoleRequest(
+                    id=FAKE_SERIAL,
+                    role=video_pb2.ROLE_USBCSOURCE_USBCSINK,
+                ),
+                self.context,
+            )
+
+        self.assertIn(
+            "Corrupted UCD firmware version after USB-PD quirks",
+            str(ctx.exception),
+        )
+        self.mock_role.pdcrx.controls.reset.assert_called_once()
+
     def test_set_role_recovers_pdrx_zero_via_reopen_when_pdc_reset_insufficient(
         self,
     ) -> None:
@@ -764,11 +863,9 @@ class TestUcd500Server(unittest.TestCase):
         self.server.OpenVideoTester(
             video_pb2.OpenVideoTesterRequest(id=FAKE_SERIAL), self.context
         )
-        self.mock_io.get_prepared_fw_info.side_effect = [
-            WEDGED_PD_FW_INFO,
-            WEDGED_PD_FW_INFO,
-            HEALTHY_FW_INFO,
-        ]
+        self.mock_io.get_prepared_fw_info.side_effect = (
+            [WEDGED_PD_FW_INFO] * 7 + [HEALTHY_FW_INFO, HEALTHY_FW_INFO]
+        )
 
         with (
             mock.patch("ucd.ucd500.UniTAP.OpfHandlerInternal"),
@@ -831,12 +928,9 @@ class TestUcd500Server(unittest.TestCase):
             "UCD-500|2236C961|UX: 0.0.0, UF: 1.0.22, PDRX: 0.2.3, PDTX: 0.2.3|"
             "1.0|2048"
         )
-        self.mock_io.get_prepared_fw_info.side_effect = [
-            ux_and_pdrx_zero_fw,
-            benign_ux_zero_fw,
-            benign_ux_zero_fw,
-            benign_ux_zero_fw,
-        ]
+        self.mock_io.get_prepared_fw_info.side_effect = (
+            [ux_and_pdrx_zero_fw] + [benign_ux_zero_fw] * 5
+        )
 
         with (
             mock.patch("ucd.ucd500.UniTAP.OpfHandlerInternal"),
