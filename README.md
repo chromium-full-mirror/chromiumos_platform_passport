@@ -99,10 +99,11 @@ Passport has several versions that are used:
 The lab run versions are built from the
 `us-docker.pkg.dev/cros-passport/passport/passport:latest` development version.
 
-To update development version simply run:
+To update development version (optionally applying additional tags via
+`--extra_tags`) simply run:
 
 ```bash
-./scripts/build_docker.sh --push --remote_source --tag latest
+./scripts/build_docker.sh --push --remote_source --tag latest --extra_tags stable
 ```
 
 Once that has been updated the staging version for the lab should get built and

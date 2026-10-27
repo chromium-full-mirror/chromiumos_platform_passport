@@ -7,6 +7,7 @@ REMOTE_SOURCE=false
 PUSH=false
 PLATFORMS="linux/amd64"
 TAG="${USER}-testing" # Default primary tag
+EXTRA_TAGS=""
 AR_REGION="us"
 PROJECT_ID="cros-passport"
 AR_REPOSITORY="passport"
@@ -20,6 +21,7 @@ usage() {
   echo "  --push                 Push the built image to Artifact Registry."
   echo "  --platforms <list>     Comma-separated list of platforms (default: ${PLATFORMS})."
   echo "  --tag <tag>            Primary image tag (default: ${TAG})."
+  echo "  --extra_tags <list>    Comma-separated list of extra image tags."
   echo "  --ar_region <region>   Artifact Registry region (default: ${AR_REGION})."
   echo "  --project_id <id>      GCP Project ID (default: ${PROJECT_ID})."
   echo "  --ar_repository <repo> Artifact Registry repository (default: ${AR_REPOSITORY})."
@@ -37,6 +39,8 @@ while [[ $# -gt 0 ]]; do
     --platforms=*) PLATFORMS="${1#*=}"; shift ;;
     --tag) TAG="$2"; shift 2 ;;
     --tag=*) TAG="${1#*=}"; shift ;;
+    --extra_tags) EXTRA_TAGS="$2"; shift 2 ;;
+    --extra_tags=*) EXTRA_TAGS="${1#*=}"; shift ;;
     --ar_region) AR_REGION="$2"; shift 2 ;;
     --ar_region=*) AR_REGION="${1#*=}"; shift ;;
     --project_id) PROJECT_ID="$2"; shift 2 ;;
@@ -120,8 +124,17 @@ if [[ "${PUSH}" == true ]]; then
         # Additional tag with the provided SHA (if any).
         BUILD_TAGS+=("-t" "${IMAGE_BASE}:${SHORT_SHA}")
     fi
-    echo "Applying tags: ${BUILD_TAGS[@]}"
+    if [[ -n "${EXTRA_TAGS}" ]]; then
+        IFS=',' read -ra EXTRA_TAG_ARRAY <<< "${EXTRA_TAGS}"
+        for EXTRA_TAG in "${EXTRA_TAG_ARRAY[@]}"; do
+            if [[ -n "${EXTRA_TAG}" ]]; then
+                BUILD_TAGS+=("-t" "${IMAGE_BASE}:${EXTRA_TAG}")
+            fi
+        done
+    fi
+    echo "Applying tags: ${BUILD_TAGS[*]}"
 
+    # shellcheck disable=SC2086
     docker buildx build \
         --platform="${PLATFORMS}" \
         --cache-from "type=registry,ref=${IMAGE_BASE}:buildcache-${TAG}" \
@@ -139,6 +152,7 @@ else
 
         PLATFORM_SUFFIX=$(echo "${PLATFORM}" | tr '/' '-')
         LOCAL_TAG="${IMAGE_BASE}:${TAG}-local-${PLATFORM_SUFFIX}"
+        # shellcheck disable=SC2086
         docker buildx build \
             --platform="${PLATFORM}" \
             -t "${LOCAL_TAG}" \

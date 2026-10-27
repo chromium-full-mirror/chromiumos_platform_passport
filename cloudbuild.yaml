@@ -20,17 +20,20 @@ steps:
     - '--ar_repository=${_AR_REPOSITORY}'
     - '--image_name=${_IMAGE_NAME}'
     - '--tag=${_TAG}'
+    - '--extra_tags=${_EXTRA_TAGS}'
     - '--platforms=${_PLATFORMS}'
+    - '--project_id=${_PROJECT_ID}'
     # GCB Built-in substitutions
-    - '--project_id=${PROJECT_ID}'
     - '--short_sha=${SHORT_SHA}'
     - '--branch_name=${BRANCH_NAME}'
 
 substitutions:
   _AR_REGION: "us"
+  _PROJECT_ID: "cros-passport"
   _AR_REPOSITORY: "passport"
   _IMAGE_NAME: "passport"
   _TAG: "staging"
+  _EXTRA_TAGS: "autopush"
   _PLATFORMS: "linux/amd64,linux/arm64"
 
 options:
