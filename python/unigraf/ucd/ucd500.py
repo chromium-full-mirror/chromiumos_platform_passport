@@ -121,6 +121,9 @@ class Ucd500Server(server.UcdServer):
         if request.HasField("max_lane"):
             self._configure_pdc_dp_alt_mode_lanes(request.max_lane)
 
+        if request.HasField("hdcp_capable"):
+            self._set_hdcp_rx_capable(request.hdcp_capable)
+
         return video_pb2.SetLinkVideoTesterResponse()
 
     def _configure_pdc_dp_alt_mode_lanes(self, max_lane: int) -> None:

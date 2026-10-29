@@ -2560,6 +2560,41 @@ class TestUcd500Server(unittest.TestCase):
         self.assertIn("Failed to disable HDCP", "\n".join(logs.output))
         self.mock_port_rx.hdcp.config.set.side_effect = None
 
+    def test_set_link_video_tester_hdcp_capable(self) -> None:
+        """Verifies SetLinkVideoTester toggles HDCP 1.x and 2.x capability."""
+        self._open_and_set_role()
+        for capable in (True, False):
+            self.mock_port_rx.hdcp.config.set.reset_mock()
+            req = video_pb2.SetLinkVideoTesterRequest(
+                id=FAKE_SERIAL, hdcp_capable=capable
+            )
+            self.server.SetLinkVideoTester(req, self.context)
+            configs = [
+                call.args[0]
+                for call in self.mock_port_rx.hdcp.config.set.call_args_list
+            ]
+            self.assertEqual(len(configs), 2)
+            self.assertTrue(all(c.capable == capable for c in configs))
+
+    def test_set_link_video_tester_hdcp_enable_failure_raises(self) -> None:
+        """Verifies a failed HDCP enable surfaces instead of passing silently."""
+        self._open_and_set_role()
+        self.mock_port_rx.hdcp.config.set.side_effect = RuntimeError("USB")
+        req = video_pb2.SetLinkVideoTesterRequest(
+            id=FAKE_SERIAL, hdcp_capable=True
+        )
+        with self.assertRaises(RuntimeError):
+            self.server.SetLinkVideoTester(req, self.context)
+        self.mock_port_rx.hdcp.config.set.side_effect = None
+
+    def test_set_link_video_tester_without_hdcp_field_keeps_hdcp(self) -> None:
+        """Verifies SetLinkVideoTester leaves HDCP alone when unset."""
+        self._open_and_set_role()
+        self.mock_port_rx.hdcp.config.set.reset_mock()
+        req = video_pb2.SetLinkVideoTesterRequest(id=FAKE_SERIAL, max_lane=4)
+        self.server.SetLinkVideoTester(req, self.context)
+        self.mock_port_rx.hdcp.config.set.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

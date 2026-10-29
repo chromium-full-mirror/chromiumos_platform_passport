@@ -1042,41 +1042,38 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
         """Selects the role with device quirks and verifies capturer."""
         self._last_requested_role = role_to_set
         self._role_set_quirks(role_to_set)
-        self._disable_hdcp_rx()
+        # HDCP is off by default: with link encryption active the UCD masks
+        # captured frames with solid blue RGB(0,0,255) (HDCP license rule).
+        # Tests that verify protected content opt in via
+        # SetLinkVideoTesterRequest.hdcp_capable.
+        self._set_hdcp_rx_capable(False)
         self._ensure_video_capturer_idle()
 
-    def _disable_hdcp_rx(self) -> None:
-        """Disables HDCP 1.x and 2.x sink capabilities on the receiver port.
+    def _set_hdcp_rx_capable(self, capable: bool) -> None:
+        """Sets HDCP 1.x and 2.x sink capability on the receiver port.
 
-        Under HDCP compliance rules, video grabbers like UCD-500/UCD-422 mask
-        captured video frames with solid blue RGB(0,0,255) when link encryption
-        is active. Disabling HDCP sink capability globally prevents the DUT
-        from negotiating link-level HDCP encryption during validation tests.
-
-        Called from _activate_role(), which every role selection (including
-        self-heal reopen) goes through. Takes effect on the DUT's next HDCP
-        authentication (i.e. next hotplug).
-
-        NOTE: If a test suite needs to verify protected content in the future,
-        HDCP sink capability can be re-enabled here (or via a new field in
-        SetRoleRequest / SetLinkVideoTesterRequest, e.g. enable_hdcp=True).
+        Takes effect on the DUT's next HDCP authentication (i.e. next hotplug).
+        Disabling is best effort so it never breaks role selection or link
+        setup; enabling raises, as an HDCP test can't run without it.
         """
         if self._port_rx is None:
             return
-
         try:
             for cfg_cls in (
                 UniTAP.HdcpRxConfig.Config1x,
                 UniTAP.HdcpRxConfig.Config2x,
             ):
                 cfg = cfg_cls()
-                cfg.capable = False
+                cfg.capable = capable
                 self._port_rx.hdcp.config.set(cfg)
-            logging.info("Disabled HDCP sink capability on UCD RX port.")
         except Exception as e:  # pylint: disable=broad-except
+            if capable:
+                raise
             logging.warning(
                 "Failed to disable HDCP sink capability on UCD: %s", e
             )
+            return
+        logging.info("Set HDCP sink capability on UCD RX port to %s.", capable)
 
     # =========== Common gRPC Methods ===========
     def _scan_matching_testers(
