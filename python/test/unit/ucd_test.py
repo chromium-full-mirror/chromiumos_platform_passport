@@ -105,8 +105,25 @@ except ModuleNotFoundError:
     class _HDMISourceHDMISink:
         pass
 
+    class _Config1x:
+
+        def __init__(self):
+            self.capable = True
+            self.keys = None
+
+    class _Config2x:
+
+        def __init__(self):
+            self.capable = True
+            self.keys = None
+
+    class _HdcpRxConfig:
+        Config1x = _Config1x
+        Config2x = _Config2x
+
     unitap_stub.VideoCaptureStatus = _VideoCaptureStatus
     unitap_stub.EventCaptureStatus = _EventCaptureStatus
+    unitap_stub.HdcpRxConfig = _HdcpRxConfig
     unitap_stub.dev.UCD422.HDMISourceHDMISink = _HDMISourceHDMISink
     unitap_stub.dev.UCD500.USBCSourceUSBCSink = _USBCSourceUSBCSink
     unitap_stub.dev.UCD500.DPSourceUSBCSink = _DPSourceUSBCSink
@@ -2345,6 +2362,29 @@ class TestUcd500Server(unittest.TestCase):
                 "/dev/bus/usb/002/005", os.O_WRONLY
             )
             mock_ioctl_16a6.assert_called_once_with(77, 21780, 0)
+
+    def test_activate_role_disables_hdcp_rx(self) -> None:
+        """Verifies setting a role disables HDCP 1.x and 2.x on the RX port."""
+        self.mock_port_rx.hdcp.config.set.reset_mock()
+        self._open_and_set_role()
+
+        # Both 1.x and 2.x config calls must be made with capable=False.
+        self.assertEqual(self.mock_port_rx.hdcp.config.set.call_count, 2)
+        configs = [
+            call.args[0]
+            for call in self.mock_port_rx.hdcp.config.set.call_args_list
+        ]
+        self.assertTrue(all(not getattr(c, "capable", True) for c in configs))
+
+    def test_disable_hdcp_rx_handles_exception_gracefully(self) -> None:
+        """Verifies failure to disable HDCP logs warning without raising."""
+        self.mock_port_rx.hdcp.config.set.side_effect = RuntimeError(
+            "Hardware communication failed"
+        )
+        with self.assertLogs(level="WARNING") as logs:
+            self._open_and_set_role()
+        self.assertIn("Failed to disable HDCP", "\n".join(logs.output))
+        self.mock_port_rx.hdcp.config.set.side_effect = None
 
 
 if __name__ == "__main__":
