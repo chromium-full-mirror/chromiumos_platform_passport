@@ -121,6 +121,10 @@ except ModuleNotFoundError:
         Config1x = _Config1x
         Config2x = _Config2x
 
+    class _VideoFrameDSC:
+        pass
+
+    unitap_stub.VideoFrameDSC = _VideoFrameDSC
     unitap_stub.VideoCaptureStatus = _VideoCaptureStatus
     unitap_stub.EventCaptureStatus = _EventCaptureStatus
     unitap_stub.HdcpRxConfig = _HdcpRxConfig
@@ -203,6 +207,9 @@ class TestUcd500Server(unittest.TestCase):
 
         self.server = ucd500.Ucd500Server()
         self.context = mock.MagicMock()
+        self.mock_save_frame = self.enterContext(
+            mock.patch("ucd.server.UniTAP.utils.video_frame_save_to_file")
+        )
 
     def _open_and_set_role(self) -> None:
         """Helper to open the fake UCD-500 and select USBCSourceUSBCSink."""
@@ -234,13 +241,12 @@ class TestUcd500Server(unittest.TestCase):
         link_caps.return_value.mst = False
         self.mock_port_rx.video_capturer.capture_result.buffer = [object()]
 
-        def write_bmp(file_format, path, index):
-            del file_format, index
+        def write_bmp(frame, path, file_type):
+            del frame, file_type
             with open(path, "wb") as f:
                 f.write(b"BM_FAKE_IMAGE_DATA")
 
-        capture_result = self.mock_port_rx.video_capturer.capture_result
-        capture_result.save_image_to_file.side_effect = write_bmp
+        self.mock_save_frame.side_effect = write_bmp
 
         reply = self.server.ScreenshotVideoTester(
             video_pb2.ScreenshotVideoTesterRequest(id=FAKE_SERIAL, id_stream=0),
@@ -706,13 +712,12 @@ class TestUcd500Server(unittest.TestCase):
         ]
         self.mock_port_rx.video_capturer.capture_result.buffer = [object()]
 
-        def write_bmp(file_format, path, index) -> None:
-            del file_format, index
+        def write_bmp(frame, path, file_type) -> None:
+            del frame, file_type
             with open(path, "wb") as f:
                 f.write(b"BM_RECOVERED_IMAGE")
 
-        capture_result = self.mock_port_rx.video_capturer.capture_result
-        capture_result.save_image_to_file.side_effect = write_bmp
+        self.mock_save_frame.side_effect = write_bmp
 
         reply = self.server.ScreenshotVideoTester(
             video_pb2.ScreenshotVideoTesterRequest(id=FAKE_SERIAL, id_stream=0),
@@ -1091,8 +1096,8 @@ class TestUcd500Server(unittest.TestCase):
         seen_paths: list[str] = []
         attempt_counter = {"count": 0}
 
-        def save_bmp(file_format, path, index) -> None:
-            del file_format, index
+        def save_bmp(frame, path, file_type) -> None:
+            del frame, file_type
             seen_paths.append(path)
             attempt_counter["count"] += 1
             if attempt_counter["count"] == 1:
@@ -1102,8 +1107,7 @@ class TestUcd500Server(unittest.TestCase):
             with open(path, "wb") as f:
                 f.write(b"BM_DSC_DECODED_OK")
 
-        capture_result = self.mock_port_rx.video_capturer.capture_result
-        capture_result.save_image_to_file.side_effect = save_bmp
+        self.mock_save_frame.side_effect = save_bmp
 
         reply = self.server.ScreenshotVideoTester(
             video_pb2.ScreenshotVideoTesterRequest(id=FAKE_SERIAL, id_stream=0),
@@ -1117,55 +1121,136 @@ class TestUcd500Server(unittest.TestCase):
         mock_sleep.assert_any_call(self.server._SCREENSHOT_RETRY_DELAY_SEC)
 
     @mock.patch("ucd.server.time.sleep")
-    def test_screenshot_retries_on_get_frame_dsc_error(
+    def test_screenshot_encodes_frame_without_holding_ucd_lock(
         self, mock_sleep: mock.MagicMock
     ) -> None:
-        """Verifies get_frame() DSC -5 failure is caught and retried."""
+        """Verifies other RPCs can take the UCD lock while a frame encodes."""
         del mock_sleep
         self._open_and_set_role()
         dp_status = self.mock_role.pdcrx.dp_alt_mode.status.dut_dp_alt_mode
         dp_status.dut_connection = "Connected"
         link_caps = self.mock_port_rx.link.capabilities.link_caps_status
         link_caps.return_value.mst = False
+        frame = object()
+        self.mock_port_rx.video_capturer.capture_result.buffer = [frame]
+        lock_free_during_encode: list[bool] = []
 
-        bad_frame = mock.MagicMock()
-        bad_frame.get_frame.side_effect = RuntimeError(
-            "Decoding failed with error code: -5"
-        )
-        good_frame = mock.MagicMock()
-        good_frame.get_frame.return_value = object()
+        def probe_lock() -> None:
+            acquired = self.server._lock.acquire(blocking=False)
+            if acquired:
+                self.server._lock.release()
+            lock_free_during_encode.append(acquired)
 
-        def pop_side_effect():
-            if self.mock_port_rx.video_capturer.pop_element.call_count == 1:
-                self.mock_port_rx.video_capturer.capture_result.buffer = [
-                    bad_frame
-                ]
-                return bad_frame
-            self.mock_port_rx.video_capturer.capture_result.buffer = [
-                good_frame
-            ]
-            return good_frame
-
-        self.mock_port_rx.video_capturer.pop_element.side_effect = (
-            pop_side_effect
-        )
-
-        def write_bmp(file_format, path, index) -> None:
-            del file_format, index
+        def write_bmp(saved_frame, path, file_type) -> None:
+            del file_type
+            self.assertIs(saved_frame, frame)
+            # A concurrent capture clearing the buffer must not matter.
+            self.mock_port_rx.video_capturer.capture_result.buffer = []
+            prober = threading.Thread(target=probe_lock)
+            prober.start()
+            prober.join()
             with open(path, "wb") as f:
-                f.write(b"BM_FROM_GOOD_FRAME")
+                f.write(b"BM_UNLOCKED")
 
-        capture_result = self.mock_port_rx.video_capturer.capture_result
-        capture_result.save_image_to_file.side_effect = write_bmp
+        self.mock_save_frame.side_effect = write_bmp
 
         reply = self.server.ScreenshotVideoTester(
             video_pb2.ScreenshotVideoTesterRequest(id=FAKE_SERIAL, id_stream=0),
             self.context,
         )
 
-        self.assertEqual(reply.screenshot, b"BM_FROM_GOOD_FRAME")
-        bad_frame.get_frame.assert_called_once()
-        good_frame.get_frame.assert_called_once()
+        self.assertEqual(reply.screenshot, b"BM_UNLOCKED")
+        self.assertEqual(lock_free_during_encode, [True])
+
+    @mock.patch("ucd.server.time.sleep")
+    def test_screenshot_decodes_dsc_frames_natively(
+        self, mock_sleep: mock.MagicMock
+    ) -> None:
+        """Verifies DSC frames bypass UniTAP's slow Python save path."""
+        del mock_sleep
+        self._open_and_set_role()
+        dp_status = self.mock_role.pdcrx.dp_alt_mode.status.dut_dp_alt_mode
+        dp_status.dut_connection = "Connected"
+        link_caps = self.mock_port_rx.link.capabilities.link_caps_status
+        link_caps.return_value.mst = False
+        frame = UniTAP.VideoFrameDSC()
+        self.mock_port_rx.video_capturer.capture_result.buffer = [frame]
+
+        def write_bmp(saved_frame, path) -> None:
+            self.assertIs(saved_frame, frame)
+            with open(path, "wb") as f:
+                f.write(b"BM_DSC")
+
+        with mock.patch.object(
+            ucd_server, "_save_dsc_frame_as_bmp", side_effect=write_bmp
+        ):
+            reply = self.server.ScreenshotVideoTester(
+                video_pb2.ScreenshotVideoTesterRequest(
+                    id=FAKE_SERIAL, id_stream=0
+                ),
+                self.context,
+            )
+
+        self.assertEqual(reply.screenshot, b"BM_DSC")
+        self.mock_save_frame.assert_not_called()
+
+    @mock.patch("ucd.server.time.sleep")
+    def test_screenshot_stops_retrying_once_client_is_gone(
+        self, mock_sleep: mock.MagicMock
+    ) -> None:
+        """Verifies no new capture attempt starts after the client gave up."""
+        del mock_sleep
+        self._open_and_set_role()
+        dp_status = self.mock_role.pdcrx.dp_alt_mode.status.dut_dp_alt_mode
+        dp_status.dut_connection = "Connected"
+        link_caps = self.mock_port_rx.link.capabilities.link_caps_status
+        link_caps.return_value.mst = False
+        self.mock_port_rx.video_capturer.capture_result.buffer = [object()]
+        self.mock_save_frame.side_effect = RuntimeError(
+            "Decoding failed with error code: -5"
+        )
+        self.context.is_active.return_value = False
+
+        with self.assertRaises(RuntimeError):
+            self.server.ScreenshotVideoTester(
+                video_pb2.ScreenshotVideoTesterRequest(
+                    id=FAKE_SERIAL, id_stream=0
+                ),
+                self.context,
+            )
+
+        self.mock_port_rx.video_capturer.pop_element.assert_called_once()
+        self.context.set_code.assert_called_once_with(
+            grpc.StatusCode.UNAVAILABLE
+        )
+
+    def test_save_dsc_frame_as_bmp_prepends_header_and_frees_image(
+        self,
+    ) -> None:
+        """Verifies the DSCF header is always prepended and the image freed."""
+        dscl = mock.MagicMock()
+        uicl = mock.MagicMock(UICL_SUCCESS=0)
+        uicl.UICL_SaveToFile.return_value = -1
+        fake_modules = {
+            "UniTAP.libs": mock.MagicMock(),
+            "UniTAP.libs.lib_dscl": mock.MagicMock(dscl=dscl),
+            "UniTAP.libs.lib_uicl": mock.MagicMock(uicl=uicl),
+        }
+        frame = mock.MagicMock()
+        # b"DSCF" mid-payload made UniTAP skip the header and fail with -25.
+        frame.data = bytearray(b"PPS..DSCF..SLICES")
+        frame.compression_info.is_simple_as_444 = False
+
+        with mock.patch.dict(sys.modules, fake_modules):
+            with self.assertRaisesRegex(RuntimeError, "failed: -1"):
+                ucd_server._save_dsc_frame_as_bmp(frame, "unused.bmp")
+
+        encoded = dscl.DSCL_Decode.call_args.args[0]
+        self.assertEqual(bytes(encoded.DataPtr), b"DSCFPPS..DSCF..SLICES")
+        self.assertEqual(encoded.DataSize, len(b"DSCFPPS..DSCF..SLICES"))
+        uicl.UICL_FreeImage.assert_called_once_with(
+            dscl.DSCL_Decode.return_value
+        )
 
     @mock.patch("ucd.server.time.sleep")
     def test_screenshot_preserves_active_event_capture(
@@ -1185,13 +1270,12 @@ class TestUcd500Server(unittest.TestCase):
         link_caps.return_value.mst = False
         self.mock_port_rx.video_capturer.capture_result.buffer = [object()]
 
-        def write_bmp(file_format, path, index) -> None:
-            del file_format, index
+        def write_bmp(frame, path, file_type) -> None:
+            del frame, file_type
             with open(path, "wb") as f:
                 f.write(b"BM_WITH_EVENTS")
 
-        capture_result = self.mock_port_rx.video_capturer.capture_result
-        capture_result.save_image_to_file.side_effect = write_bmp
+        self.mock_save_frame.side_effect = write_bmp
 
         self.server.ScreenshotVideoTester(
             video_pb2.ScreenshotVideoTesterRequest(id=FAKE_SERIAL, id_stream=0),
@@ -1600,10 +1684,7 @@ class TestUcd500Server(unittest.TestCase):
         self.mock_port_rx.link.status.stream.side_effect = None
         self.mock_port_rx.link.status.stream.return_value = latched_stream
         self.mock_port_rx.video_capturer.capture_result.buffer = [object()]
-        capture_result = self.mock_port_rx.video_capturer.capture_result
-        capture_result.save_image_to_file.side_effect = (
-            lambda file_format, path, index: None
-        )
+        self.mock_save_frame.side_effect = lambda frame, path, file_type: None
         with self.assertRaises(RuntimeError) as ctx2:
             self.server.ScreenshotVideoTester(
                 video_pb2.ScreenshotVideoTesterRequest(
@@ -2213,13 +2294,12 @@ class TestUcd500Server(unittest.TestCase):
 
         self.mock_port_rx.video_capturer.capture_result.buffer = [object()]
 
-        def write_bmp(file_format, path, index) -> None:
-            del file_format, index
+        def write_bmp(frame, path, file_type) -> None:
+            del frame, file_type
             with open(path, "wb") as f:
                 f.write(b"BM_DSC_OK")
 
-        capture_result = self.mock_port_rx.video_capturer.capture_result
-        capture_result.save_image_to_file.side_effect = write_bmp
+        self.mock_save_frame.side_effect = write_bmp
 
         reply = self.server.ScreenshotVideoTester(
             video_pb2.ScreenshotVideoTesterRequest(id=FAKE_SERIAL, id_stream=0),
@@ -2389,4 +2469,3 @@ class TestUcd500Server(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

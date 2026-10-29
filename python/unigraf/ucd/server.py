@@ -11,6 +11,7 @@ using the UniTAP library.
 
 import atexit
 import contextlib
+import ctypes
 import fcntl
 import functools
 import gc
@@ -42,6 +43,9 @@ from utils import log_functionality
 # pylint: enable=import-error
 
 _DEFAULT_LOCK_TIMEOUT_SEC = 90.0
+# Frame encoding runs outside the UCD lock; keep UniTAP's native image libs
+# single-threaded as they were when everything ran under the UCD lock.
+_ENCODE_LOCK = threading.Lock()
 
 
 def rsetattr(obj, attr, val):
@@ -127,6 +131,40 @@ def temp_file_path(suffix: str = "", extra_suffixes: tuple[str, ...] = ()):
                     os.unlink(path)
             except OSError as e:
                 logging.debug("Failed to remove temp file %s: %s", path, e)
+
+
+def _save_dsc_frame_as_bmp(frame, path: str) -> None:
+    """Decodes a DSC frame into a BMP file with UniTAP's native libraries.
+
+    Byte-identical to UniTAP's save_image_to_file, minus its Python glue that
+    copies the frame byte by byte twice (about 8x slower, minutes on lab
+    hosts for 8K) and never frees the decoded image (b/578947985).
+    """
+    # pylint: disable=import-outside-toplevel,import-error
+    from UniTAP.libs.lib_dscl import dscl
+    from UniTAP.libs.lib_dscl import dscl_types
+    from UniTAP.libs.lib_uicl import uicl
+
+    # UniTAP prepends the header unless b"DSCF" occurs anywhere in the data,
+    # so a payload that happens to contain those bytes fails to decode.
+    data = frame.data
+    if not data.startswith(b"DSCF"):
+        data = b"DSCF" + data
+    encoded = dscl_types.DSCL_Image()
+    encoded.DataSize = len(data)
+    encoded.DataPtr = (ctypes.c_uint8 * len(data)).from_buffer_copy(data)
+    decoded = dscl.DSCL_Decode(
+        encoded,
+        decode_simple422_to_444=frame.compression_info.is_simple_as_444,
+    )
+    try:
+        result = uicl.UICL_SaveToFile(
+            decoded, path, uicl.UICL_ImageFileFormat.FILE_FORMAT_BMP
+        )
+        if result < uicl.UICL_SUCCESS:
+            raise RuntimeError(f"Saving decoded DSC frame failed: {result}")
+    finally:
+        uicl.UICL_FreeImage(decoded)
 
 
 class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
@@ -1225,14 +1263,15 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
 
         return video_pb2.LoadEdidVideoTesterResponse(success=len(ret) != 0)
 
-    def _save_capture_bmp(self, result) -> bytes:
-        """Saves the first frame of a video capture result to BMP bytes.
+    @staticmethod
+    def _frame_to_bmp(frame) -> bytes:
+        """Encodes a captured frame as BMP bytes.
 
-        Uses temp_file_path with deterministic finally unlink cleanup so
-        failed DSC decodes inside save_image_to_file never leak /tmp files.
+        Pure host-side work on an already captured frame: it never touches the
+        device, so callers must not hold the UCD lock while it runs.
 
         Args:
-            result: UniTAP video capture result object containing frames.
+            frame: UniTAP VideoFrame or VideoFrameDSC popped by the capturer.
 
         Returns:
             Raw BMP image bytes written by UniTAP.
@@ -1240,13 +1279,14 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
         Raises:
             RuntimeError: If the saved BMP file is empty (0 bytes).
         """
-        with temp_file_path(suffix=".bmp") as tmp_path:
+        with _ENCODE_LOCK, temp_file_path(suffix=".bmp") as tmp_path:
             logging.info("Saving image to disk")
-            result.save_image_to_file(
-                file_format=UniTAP.PictureFileFormat.BMP,
-                path=tmp_path,
-                index=0,
-            )
+            if isinstance(frame, UniTAP.VideoFrameDSC):
+                _save_dsc_frame_as_bmp(frame, tmp_path)
+            else:
+                UniTAP.utils.video_frame_save_to_file(
+                    frame, tmp_path, UniTAP.utils.ImageFileFormat.IFF_BMP
+                )
             with open(tmp_path, "rb") as f:
                 screenshot_bytes = f.read()
 
@@ -1335,128 +1375,45 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
         return True, ""
 
     # Do not log the request as the screenshots can get very big.
-    @synchronized
     def ScreenshotVideoTester(self, request, context):
-        """Captures a screenshot from a specific stream of a video tester."""
+        """Captures a screenshot from a specific stream of a video tester.
+
+        Only the hardware capture holds the UCD lock. Encoding the frame (DSC
+        decode for 8K) runs unlocked so it can never starve other RPCs, and
+        no new attempt starts once the client has given up.
+        """
         logging.info(
             "Running ScreenshotVideoTester for stream %d on device %s",
             request.id_stream,
             request.id,
         )
-        self._check_serial_active(request.id)
-
-        # Validate stream index against active hardware streams if supported.
-        try:
-            active_streams = self._get_number_of_video_streams()
-            if request.id_stream < 0 or 0 < active_streams <= request.id_stream:
-                msg = (
-                    f"Requested stream {request.id_stream} exceeds available "
-                    f"streams ({active_streams})"
-                )
-                logging.error(msg)
-                context.set_code(grpc.StatusCode.INVALID_ARGUMENT)
-                context.set_details(msg)
-                raise ValueError(msg)
-        except RuntimeError:
-            pass
-
-        valid, details = self._check_dut_driving_valid_stream(request.id_stream)
-        if not valid:
-            logging.warning(
-                "Stream %d reports inactive/unlatched video (%s); waiting 0.5s"
-                " to re-check.",
-                request.id_stream,
-                details,
-            )
-            time.sleep(0.5)
-            valid, details = self._check_dut_driving_valid_stream(
-                request.id_stream
-            )
-            if not valid:
-                msg = (
-                    "DUT is not driving valid video on stream"
-                    f" {request.id_stream} ({details})"
-                )
-                logging.error(msg)
-                context.set_code(grpc.StatusCode.FAILED_PRECONDITION)
-                context.set_details(msg)
-                context.abort(grpc.StatusCode.FAILED_PRECONDITION, msg)
-                return video_pb2.ScreenshotVideoTesterResponse()
-
         max_attempts = self._SCREENSHOT_MAX_ATTEMPTS
-        frame_latch_delay_sec = self._SCREENSHOT_LATCH_DELAY_SEC
-        retry_delay_sec = self._SCREENSHOT_RETRY_DELAY_SEC
         last_error = None
-
         for attempt in range(1, max_attempts + 1):
-            try:
-                if (
-                    attempt == 1
-                    or self._port_rx.video_capturer.status
-                    != UniTAP.VideoCaptureStatus.Idle
-                ):
-                    self._ensure_video_capturer_idle()
-
-                logging.info(
-                    "Start live video capture (attempt %d/%d)",
-                    attempt,
-                    max_attempts,
-                )
-
-                # Asynchronous live capture with hardware latch window.
+            if attempt > 1 and not context.is_active():
+                break
+            # Lock timeouts and precondition errors raise/abort directly.
+            frame, last_error = self._capture_frame(request, context, attempt)
+            if frame is None and last_error is None:
+                return video_pb2.ScreenshotVideoTesterResponse()
+            if frame is not None:
                 try:
-                    self._port_rx.video_capturer.start(
-                        frames_count=0,
-                        stream_number=request.id_stream,
+                    screenshot_bytes = self._frame_to_bmp(frame)
+                    logging.info(
+                        "Screenshot capture successful (%d bytes)",
+                        len(screenshot_bytes),
                     )
-                    time.sleep(frame_latch_delay_sec)
-                    popped_frame = self._port_rx.video_capturer.pop_element()
-                finally:
-                    # Guarantee hardware capturer is stopped in all paths.
-                    try:
-                        self._port_rx.video_capturer.stop()
-                    except Exception:  # pylint: disable=broad-except
-                        pass
-                    self._ensure_video_capturer_idle()
-                    self._resume_event_capture_if_active()
-
-                result = self._port_rx.video_capturer.capture_result
-                if not result.buffer:
-                    raise RuntimeError(
-                        "Capturer completed but returned an empty frame buffer"
+                    return video_pb2.ScreenshotVideoTesterResponse(
+                        screenshot=screenshot_bytes
                     )
-
-                for candidate in (result.buffer[0], popped_frame):
-                    get_frame_fn = getattr(candidate, "get_frame", None)
-                    if callable(get_frame_fn):
-                        get_frame_fn()
-                        break
-
-                screenshot_bytes = self._save_capture_bmp(result)
-
-                logging.info(
-                    "Screenshot capture successful (%d bytes)",
-                    len(screenshot_bytes),
-                )
-                return video_pb2.ScreenshotVideoTesterResponse(
-                    screenshot=screenshot_bytes
-                )
-
-            except Exception as e:  # pylint: disable=broad-except
-                logging.warning(
-                    "Screenshot capture attempt %d/%d failed: %s",
-                    attempt,
-                    max_attempts,
-                    e,
-                )
-                last_error = e
-                if attempt < max_attempts:
-                    if (
-                        self._port_rx.video_capturer.status
-                        == UniTAP.VideoCaptureStatus.Idle
-                    ):
-                        self._reset_video_capturer_pipeline()
-                    time.sleep(retry_delay_sec)
+                except Exception as e:  # pylint: disable=broad-except
+                    last_error = e
+            logging.warning(
+                "Screenshot capture attempt %d/%d failed: %s",
+                attempt,
+                max_attempts,
+                last_error,
+            )
 
         context.set_code(grpc.StatusCode.UNAVAILABLE)
         context.set_details(
@@ -1467,6 +1424,100 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
             f"Screenshot capture failed after {max_attempts} attempts:"
             f" {last_error}"
         )
+
+    @synchronized
+    def _capture_frame(self, request, context, attempt: int):
+        """Validates preconditions and captures one frame under the UCD lock.
+
+        Returns:
+            (frame, None) on success, (None, error) on a retryable capture
+            failure, or (None, None) when aborted for FAILED_PRECONDITION.
+        """
+        self._check_serial_active(request.id)
+        if attempt == 1:
+            try:
+                active_streams = self._get_number_of_video_streams()
+                if (
+                    request.id_stream < 0
+                    or 0 < active_streams <= request.id_stream
+                ):
+                    msg = (
+                        f"Requested stream {request.id_stream} exceeds"
+                        f" available streams ({active_streams})"
+                    )
+                    logging.error(msg)
+                    context.set_code(grpc.StatusCode.INVALID_ARGUMENT)
+                    context.set_details(msg)
+                    raise ValueError(msg)
+            except RuntimeError:
+                pass
+
+            valid, details = self._check_dut_driving_valid_stream(
+                request.id_stream
+            )
+            if not valid:
+                logging.warning(
+                    "Stream %d reports inactive/unlatched video (%s); waiting"
+                    " 0.5s to re-check.",
+                    request.id_stream,
+                    details,
+                )
+                time.sleep(0.5)
+                valid, details = self._check_dut_driving_valid_stream(
+                    request.id_stream
+                )
+                if not valid:
+                    msg = (
+                        "DUT is not driving valid video on stream"
+                        f" {request.id_stream} ({details})"
+                    )
+                    logging.error(msg)
+                    context.set_code(grpc.StatusCode.FAILED_PRECONDITION)
+                    context.set_details(msg)
+                    context.abort(grpc.StatusCode.FAILED_PRECONDITION, msg)
+                    return None, None
+
+        try:
+            capturer = self._port_rx.video_capturer
+            if attempt > 1:
+                if capturer.status == UniTAP.VideoCaptureStatus.Idle:
+                    self._reset_video_capturer_pipeline()
+                time.sleep(self._SCREENSHOT_RETRY_DELAY_SEC)
+            if (
+                attempt == 1
+                or capturer.status != UniTAP.VideoCaptureStatus.Idle
+            ):
+                self._ensure_video_capturer_idle()
+
+            logging.info(
+                "Start live video capture (attempt %d/%d)",
+                attempt,
+                self._SCREENSHOT_MAX_ATTEMPTS,
+            )
+
+            # Asynchronous live capture with hardware latch window.
+            try:
+                capturer.start(frames_count=0, stream_number=request.id_stream)
+                time.sleep(self._SCREENSHOT_LATCH_DELAY_SEC)
+                capturer.pop_element()
+            finally:
+                # Guarantee hardware capturer is stopped in all paths.
+                try:
+                    capturer.stop()
+                except Exception:  # pylint: disable=broad-except
+                    pass
+                self._ensure_video_capturer_idle()
+                self._resume_event_capture_if_active()
+
+            result = capturer.capture_result
+            if not result.buffer:
+                raise RuntimeError(
+                    "Capturer completed but returned an empty frame buffer"
+                )
+            # Hold the frame itself: the next capture clears result.buffer.
+            return result.buffer[0], None
+        except Exception as e:  # pylint: disable=broad-except
+            return None, e
 
     @synchronized
     @log_functionality.logger
