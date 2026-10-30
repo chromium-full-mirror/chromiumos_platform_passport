@@ -23,10 +23,59 @@ const (
 	PORT_SCAN_PATTERN = "PORT_BOUND"
 )
 
+// maxBridgeRestarts bounds relaunches so a bridge that crashes on startup doesn't loop forever.
+const maxBridgeRestarts = 10
+
 // LaunchPythonBridgefAndGetPort starts the external python process, pipes its output to stdout,
 // and waits for a specific handshake string (PORT_BOUND:X) to determine the dynamic port.
-// It returns the port, the command object (for cleanup), or an error.
+// It returns the port, the first process's command object, or an error.
+// Once started, the bridge is supervised: if it exits, the exit status is logged and it is
+// relaunched on the same port so the caller's gRPC connection reconnects transparently.
 func LaunchPythonBridgefAndGetPort(binPath string, portArg int64, deviceType string) (int64, *exec.Cmd, error) {
+	port, cmd, err := startPythonBridge(binPath, portArg, deviceType)
+	if err != nil {
+		return 0, nil, err
+	}
+	go superviseBridge(binPath, port, deviceType, cmd)
+	return port, cmd, nil
+}
+
+// superviseBridge waits for the bridge to exit, logs why, and relaunches it on the same port.
+// shortcut: a caller that KillPythonControl()s a supervised bridge gets it relaunched (and
+// races on Wait); today that only happens when the caller's Init fails and passport exits.
+// Add an explicit stop handle if a plugin ever needs to stop a bridge at runtime.
+func superviseBridge(binPath string, port int64, deviceType string, cmd *exec.Cmd) {
+	for restart := 1; restart <= maxBridgeRestarts; restart++ {
+		if cmd != nil {
+			slog.Error("Python bridge exited; relaunching", "path", binPath, "device", deviceType,
+				"port", port, "err", cmd.Wait(), "restart", restart)
+		} else {
+			time.Sleep(time.Second)
+		}
+
+		newPort, newCmd, err := startPythonBridge(binPath, port, deviceType)
+		switch {
+		case err != nil:
+			slog.Error("Failed to relaunch python bridge", "path", binPath, "err", err)
+			cmd = nil
+		case newPort != port:
+			// The caller's gRPC client is pinned to the original port.
+			slog.Error("Relaunched python bridge on wrong port", "want", port, "got", newPort)
+			KillPythonControl(newCmd)
+			cmd = nil
+		default:
+			slog.Info("Relaunched python bridge", "path", binPath, "device", deviceType, "port", port)
+			cmd = newCmd
+		}
+	}
+	if cmd != nil {
+		slog.Error("Python bridge exited", "path", binPath, "device", deviceType, "port", port, "err", cmd.Wait())
+	}
+	slog.Error("Python bridge restart limit reached, giving up", "path", binPath, "device", deviceType)
+}
+
+// startPythonBridge launches the python process once and returns the port it bound.
+func startPythonBridge(binPath string, portArg int64, deviceType string) (int64, *exec.Cmd, error) {
 	args := []string{"--port", strconv.FormatInt(portArg, 10), "--port-scan-pattern", PORT_SCAN_PATTERN}
 	if deviceType != "" {
 		args = append(args, "--device", deviceType)
@@ -62,6 +111,8 @@ func LaunchPythonBridgefAndGetPort(binPath string, portArg int64, deviceType str
 	errChan := make(chan error, 1)
 
 	go func() {
+		// Close our end once the child exits so relaunches don't leak a pipe each.
+		defer pipeReader.Close()
 		// Use bufio.Reader to read line by line without line length limits.
 		reader := bufio.NewReader(pipeReader)
 		found := false
@@ -113,6 +164,7 @@ func LaunchPythonBridgefAndGetPort(binPath string, portArg int64, deviceType str
 	case p := <-portChan:
 		return p, cmd, nil
 	case err := <-errChan:
+		KillPythonControl(cmd) // Reap it; otherwise every failed relaunch leaves a zombie.
 		pipeReader.Close()
 		return 0, nil, err
 	case <-time.After(45 * time.Second):
