@@ -189,6 +189,9 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
     _TSI_CAP_CONFIG = 0x302
     _TSI_USBC_FLUSH_BULK_PIPES_W = 0x5002C004
     _ROLE_SELECT_RETRIES = 2
+    # Minimum capture memory the device must report in its info string; 0
+    # disables the check (overridden per device type).
+    _MIN_CAPTURE_MEMORY_KIB = 0
     _SCREENSHOT_MAX_ATTEMPTS = 3
     _SCREENSHOT_LATCH_DELAY_SEC = 0.5
     _SCREENSHOT_RETRY_DELAY_SEC = 1.0
@@ -214,6 +217,16 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
         # Hardware timestamp (ns) of the last frame popped from the capturer.
         self._last_frame_timestamp_ns = None
         self._device_name = device_name
+
+        # UniTAP disables its logger on import, which also stops TsiLib() from
+        # registering libTSI's native log callback, so capture failures only
+        # surface as "Minimum buffer size must be more than 0". Re-enable it
+        # before TsiLib() and keep only libTSI errors to avoid log spam.
+        tsi_logger = logging.getLogger("unitap")
+        tsi_logger.disabled = False
+        tsi_logger.handlers.clear()
+        tsi_logger.propagate = True
+        tsi_logger.setLevel(logging.ERROR)
 
         self._tsilib = UniTAP.TsiLib()
         atexit.register(self.__del__)
@@ -577,6 +590,11 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
             if re.search(rf"\b{comp}:\s*0\.0\.0(?:\.0)?\b", fw_info):
                 corrupted.append(comp)
         return corrupted
+
+    def _is_capture_memory_degraded(self, fw_info: str) -> bool:
+        """Returns True if fw_info reports less capture memory than expected."""
+        match = re.search(r"(\d+)\s*KiB", fw_info or "")
+        return bool(match) and int(match.group(1)) < self._MIN_CAPTURE_MEMORY_KIB
 
     def _is_benign_ux_only_corruption(self, fw_info: str, role=None) -> bool:
         """Checks if only UX is 0.0.0 while UF and active PD are healthy."""
@@ -986,6 +1004,12 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
 
                 self._role = self._dev.select_role(role_to_set)
                 fw_info = self._get_fw_info()
+                if self._is_capture_memory_degraded(fw_info):
+                    # Every screenshot would fail with "Minimum buffer size
+                    # must be more than 0"; escalate through the recovery tiers.
+                    raise RuntimeError(
+                        f"UCD capture memory degraded: {fw_info}"
+                    )
                 corrupted = self._get_corrupted_fw_components(
                     fw_info, self._role
                 )

@@ -421,6 +421,58 @@ class TestUcd500Server(unittest.TestCase):
         self.assertEqual(self.mock_dev.select_role.call_count, 2)
         self.mock_tsilib.close.assert_called_once_with(self.mock_dev)
 
+    def test_set_role_reopens_on_degraded_capture_memory(self) -> None:
+        """Verifies a 1 GiB capture-memory report triggers reopen and retry."""
+        self.server.OpenVideoTester(
+            video_pb2.OpenVideoTesterRequest(id=FAKE_SERIAL), self.context
+        )
+        self.mock_io.get_prepared_fw_info.side_effect = [
+            HEALTHY_FW_INFO + "| 1048576 KiB",
+            HEALTHY_FW_INFO + "| 16777216 KiB",
+            HEALTHY_FW_INFO + "| 16777216 KiB",
+        ]
+
+        with (
+            mock.patch("ucd.ucd500.UniTAP.OpfHandlerInternal"),
+            mock.patch("ucd.server.time.sleep"),
+        ):
+            reply = self.server.SetRoleVideoTester(
+                video_pb2.SetRoleRequest(
+                    id=FAKE_SERIAL,
+                    role=video_pb2.ROLE_USBCSOURCE_USBCSINK,
+                ),
+                self.context,
+            )
+
+        self.assertTrue(reply.success)
+        self.assertEqual(self.mock_dev.select_role.call_count, 2)
+
+    def test_set_role_fails_when_capture_memory_stays_degraded(self) -> None:
+        """Verifies persistent degraded capture memory fails SetRole."""
+        self.server.OpenVideoTester(
+            video_pb2.OpenVideoTesterRequest(id=FAKE_SERIAL), self.context
+        )
+        self.mock_io.get_prepared_fw_info.return_value = (
+            HEALTHY_FW_INFO + "| 1048576 KiB"
+        )
+
+        with (
+            mock.patch("ucd.ucd500.UniTAP.OpfHandlerInternal"),
+            mock.patch("ucd.server.time.sleep"),
+            mock.patch.object(self.server, "_hard_reset_and_reopen") as hard,
+            self.assertRaises(RuntimeError) as ctx,
+        ):
+            self.server.SetRoleVideoTester(
+                video_pb2.SetRoleRequest(
+                    id=FAKE_SERIAL,
+                    role=video_pb2.ROLE_USBCSOURCE_USBCSINK,
+                ),
+                self.context,
+            )
+
+        self.assertIn("UCD capture memory degraded", str(ctx.exception))
+        hard.assert_called_once()
+
     def test_set_role_reopens_on_not_existing_role_selected(self) -> None:
         """Verifies _role_set_quirks reopens when select_role raises."""
         self.server.OpenVideoTester(

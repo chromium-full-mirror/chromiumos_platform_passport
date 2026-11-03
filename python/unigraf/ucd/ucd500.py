@@ -32,6 +32,10 @@ class Ucd500Server(server.UcdServer):
     event capture, and role configuration methods for UCD-500 devices.
     """
 
+    # 16 GiB capture DDR. A wedged capturer reports 1048576 KiB while the DP RX
+    # still sees live video, and every screenshot returns an empty buffer.
+    _MIN_CAPTURE_MEMORY_KIB = 16 * 1024 * 1024
+
     @log_functionality.logger
     def __init__(self):
         super().__init__("UCD-500")
