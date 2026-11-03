@@ -53,6 +53,8 @@ INTEL_COMMON_PARAMS_CTS_DUT_SRC = {
         "general.test_automation.test_video_pattern": False,
         "general.test_automation.test_edid_read": False,
         "general.test_automation.test_link_training": False,
+        # drm_hwcomposer never enables VRR, so no Adaptive-Sync SDPs are sent.
+        "adaptive_sync.as_caps.support_adaptive_sync": False,
     },
     # Params can be overridden on a by model base. For example
     # "redrix" : {
@@ -81,6 +83,8 @@ BLUEY_COMMON_PARAMS_CTS_DUT_SRC = {
         "general.dut_caps.dut_caps_flags.dsc_block_prediction_supported": False,
         # Android has no userspace VESA Test Automation Daemon polling DPCD 0x218.
         "general.test_automation.test_edid_read": False,
+        # drm_hwcomposer never enables VRR, so no Adaptive-Sync SDPs are sent.
+        "adaptive_sync.as_caps.support_adaptive_sync": False,
     },
 }
 
@@ -104,6 +108,8 @@ MTK_COMMON_PARAMS_CTS_DUT_SRC = {
         "general.dut_caps.dut_caps_flags.dut_is_type_c_device": True,
         # Android has no userspace VESA Test Automation Daemon polling DPCD 0x218.
         "general.test_automation.test_edid_read": False,
+        # drm_hwcomposer never enables VRR, so no Adaptive-Sync SDPs are sent.
+        "adaptive_sync.as_caps.support_adaptive_sync": False,
     },
 }
 
