@@ -2482,6 +2482,24 @@ class TestUcd500Server(unittest.TestCase):
         dpam_mock.multifunction_preferred.assert_called_once_with(False)
         dpam_mock.enter_4_lane.assert_called_once()
 
+    def test_set_link_video_tester_resets_invalid_readback_caps(self) -> None:
+        """Verifies a 0 max_lane/bit_rate read-back is reset to defaults."""
+        self._open_and_set_role()
+        caps = self.mock_port_rx.link.capabilities.link_caps_status.return_value
+        caps.max_lane = 0
+        caps.bit_rate = 0
+
+        req = video_pb2.SetLinkVideoTesterRequest(
+            id=FAKE_SERIAL, mst=True, mst_sink_count=3
+        )
+        with self.assertLogs(level="WARNING"):
+            reply = self.server.SetLinkVideoTester(req, self.context)
+
+        self.assertIsInstance(reply, video_pb2.SetLinkVideoTesterResponse)
+        self.assertEqual(caps.max_lane, 4)
+        self.assertEqual(caps.bit_rate, 8.1)
+        self.mock_port_rx.link.capabilities.set.assert_called_once_with(caps)
+
     def test_set_link_video_tester_pdc_error_logs_warning_and_succeeds(
         self,
     ) -> None:

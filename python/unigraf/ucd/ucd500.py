@@ -43,6 +43,18 @@ class Ucd500Server(server.UcdServer):
         """Sets advanced link parameters for a given video tester."""
         self._check_serial_active(request.id)
         caps = self._role.dprx.link.capabilities.link_caps_status()
+        # DPRX can read back 0 here (e.g. after a DUT reboot), which UniTAP's
+        # set() rejects. Restore the UCD-500 DP 1.4 defaults instead.
+        if caps.max_lane not in (1, 2, 4):
+            logging.warning(
+                "Resetting read-back max_lane=%s to 4", caps.max_lane
+            )
+            caps.max_lane = 4
+        if caps.bit_rate not in (1.62, 2.7, 5.4, 6.75, 8.1):
+            logging.warning(
+                "Resetting read-back bit_rate=%s to 8.1", caps.bit_rate
+            )
+            caps.bit_rate = 8.1
 
         if request.HasField("video_spec"):
             rates = []
