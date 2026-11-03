@@ -211,6 +211,8 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
         self._port_tx = None
         self._last_requested_role = None
         self._event_capture_active = False
+        # Hardware timestamp (ns) of the last frame popped from the capturer.
+        self._last_frame_timestamp_ns = None
         self._device_name = device_name
 
         self._tsilib = UniTAP.TsiLib()
@@ -1539,9 +1541,34 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
                     "Capturer completed but returned an empty frame buffer"
                 )
             # Hold the frame itself: the next capture clears result.buffer.
-            return result.buffer[0], None
+            frame = result.buffer[0]
+            self._check_frame_is_new(frame)
+            return frame, None
         except Exception as e:  # pylint: disable=broad-except
             return None, e
+
+    def _check_frame_is_new(self, frame) -> None:
+        """Raises if the capturer handed back the previously popped frame.
+
+        When UCD-500 cannot latch a new frame (e.g. a corrupted 8K DSC stream
+        with zero wire CRCs), it returns the last latched frame, header
+        included, instead of failing (b/581098211). Distinct frames always
+        carry distinct hardware timestamps, so this never rejects a new frame.
+
+        Raises:
+            RuntimeError: If the frame's timestamp equals the last popped one.
+        """
+        timestamp_ns = getattr(getattr(frame, "timestamp", None), "value", None)
+        # Timestamp(0) is UniTAP's default for frames without a header time.
+        if not isinstance(timestamp_ns, (int, float)) or timestamp_ns <= 0:
+            return
+        last_ns = self._last_frame_timestamp_ns
+        self._last_frame_timestamp_ns = timestamp_ns
+        if timestamp_ns == last_ns:
+            raise RuntimeError(
+                "Capturer returned the previously captured frame (hardware"
+                f" timestamp {timestamp_ns} ns); no new frame was latched"
+            )
 
     @synchronized
     @log_functionality.logger

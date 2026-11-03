@@ -732,6 +732,46 @@ class TestUcd500Server(unittest.TestCase):
         self.mock_dev._TSIDevice__memory_manager.reset.assert_called_once()
         self.context.set_code.assert_not_called()
 
+    @mock.patch("ucd.server.time.sleep")
+    def test_screenshot_rejects_previously_captured_frame(
+        self, mock_sleep: mock.MagicMock
+    ) -> None:
+        """Verifies a re-delivered frame (same hardware timestamp) fails."""
+        del mock_sleep
+        self._open_and_set_role()
+        dp_status = self.mock_role.pdcrx.dp_alt_mode.status.dut_dp_alt_mode
+        dp_status.dut_connection = "Connected"
+        link_caps = self.mock_port_rx.link.capabilities.link_caps_status
+        link_caps.return_value.mst = False
+        capture_result = self.mock_port_rx.video_capturer.capture_result
+
+        def write_bmp(frame, path, file_type) -> None:
+            del file_type
+            with open(path, "wb") as f:
+                f.write(b"BM_%d" % frame.timestamp.value)
+
+        self.mock_save_frame.side_effect = write_bmp
+        request = video_pb2.ScreenshotVideoTesterRequest(
+            id=FAKE_SERIAL, id_stream=0
+        )
+        old_frame = mock.MagicMock()
+        old_frame.timestamp.value = 1000
+        capture_result.buffer = [old_frame]
+        reply = self.server.ScreenshotVideoTester(request, self.context)
+        self.assertEqual(reply.screenshot, b"BM_1000")
+
+        # No new frame latched: the capturer hands back the same frame.
+        with self.assertRaisesRegex(RuntimeError, "previously captured frame"):
+            self.server.ScreenshotVideoTester(request, self.context)
+        self.assertEqual(self.mock_save_frame.call_count, 1)
+        self.context.set_code.assert_called_with(grpc.StatusCode.UNAVAILABLE)
+
+        new_frame = mock.MagicMock()
+        new_frame.timestamp.value = 2000
+        capture_result.buffer = [new_frame]
+        reply = self.server.ScreenshotVideoTester(request, self.context)
+        self.assertEqual(reply.screenshot, b"BM_2000")
+
     def test_set_role_recovers_pdrx_zero_in_place_via_pdc_reset(self) -> None:
         """Verifies PDRX: 0.0.0 is recovered in-place via pdcrx reset."""
         self.server.OpenVideoTester(
