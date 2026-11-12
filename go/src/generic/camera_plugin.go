@@ -62,7 +62,9 @@ func init() {
 }
 
 // cameraPlugin implements a generic camera controller.
-type cameraPlugin struct{}
+type cameraPlugin struct {
+	passport.UnimplementedCameraServiceServer
+}
 
 // GetCameras probes all cameras connected to the host device.
 func (s *cameraPlugin) GetCameras(ctx context.Context, req *passport.GetCamerasRequest) (*passport.GetCamerasResponse, error) {

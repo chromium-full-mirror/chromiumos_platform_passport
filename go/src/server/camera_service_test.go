@@ -56,6 +56,7 @@ type captureVideoFunc func(req *passport.CaptureVideoRequest, stream passport.Ca
 
 // mockCameraPlugin is mock camera plugin.
 type mockCameraPlugin struct {
+	passport.UnimplementedCameraServiceServer
 	getCameras      getCamerasFunc
 	getAvgPixel     getAvgPixelFunc
 	analyzeImageHSV analyzeImageHSVFunc

@@ -15,6 +15,7 @@ import (
 // cameraServiceServer implements api/passport.CameraServiceServer and wraps individual
 // camera plugins.
 type cameraServiceServer struct {
+	passport.UnimplementedCameraServiceServer
 	// Maps individual cameras to their controlling cameraMap.
 	cameraMap map[string]CameraPlugin
 	// All registered plugins.
