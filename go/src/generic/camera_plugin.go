@@ -459,25 +459,34 @@ func (s *cameraPlugin) CaptureVideo(req *passport.CaptureVideoRequest, stream pa
 	return nil
 }
 
-func captureFrame(ctx context.Context, devPort string, exposureMicroseconds, width, height, whiteBalanceTemperature int32) ([]byte, error) {
+func openCamera(ctx context.Context, devPort string, exposureMicroseconds, width, height, whiteBalanceTemperature int32) (*webcam.Webcam, error) {
 	const settlingTime = 10
-	slog.Info("Capturing frame", "port", devPort, "requested_exposure_us", exposureMicroseconds, "width", width, "height", height, "white_balance_temp", whiteBalanceTemperature)
+	slog.Info("Opening camera", "port", devPort, "requested_exposure_us", exposureMicroseconds, "width", width, "height", height, "white_balance_temp", whiteBalanceTemperature)
 
 	cam, err := webcam.Open(devPort)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to camera %q: %w", devPort, err)
 	}
-	defer cam.Close()
+	ok := false
+	defer func() {
+		if !ok {
+			cam.Close()
+		}
+	}()
 	slog.Info("Opened camera", "port", devPort)
 
 	if err := configureImageSize(ctx, cam, width, height); err != nil {
 		return nil, fmt.Errorf("failed to configure image format for %q: %w", devPort, err)
 	}
 
+	// webcam.Open defaults bufcount to 256; cap at 4 to bound V4L2 buffer memory and latency.
+	if err := cam.SetBufferCount(4); err != nil {
+		return nil, fmt.Errorf("failed to set buffer count for %q: %w", devPort, err)
+	}
 	for i := 0; true; i++ {
 		err = cam.StartStreaming()
 		if err != nil && i > 5 {
-			return nil, fmt.Errorf("failed to start camera streaming")
+			return nil, fmt.Errorf("failed to start camera streaming: %w", err)
 		} else if err == nil {
 			break
 		}
@@ -490,9 +499,20 @@ func captureFrame(ctx context.Context, devPort string, exposureMicroseconds, wid
 
 	logAllControls(cam, devPort, "before_settling")
 
-	frameCount := 0
-	for ctx.Err() == nil {
-		err = cam.WaitForFrame(uint32(5) /*timeout*/)
+	// Discard the first settlingTime-1 frames to give the camera a chance to "warm up".
+	for i := 0; i < settlingTime-1; i++ {
+		if _, err := readRawFrame(ctx, cam); err != nil {
+			return nil, err
+		}
+	}
+	logAllControls(cam, devPort, "after_settling")
+	ok = true
+	return cam, nil
+}
+
+func readRawFrame(ctx context.Context, cam *webcam.Webcam) ([]byte, error) {
+	for i := 0; i < 3 && ctx.Err() == nil; i++ {
+		err := cam.WaitForFrame(uint32(5) /*timeout*/)
 		switch err.(type) {
 		case nil:
 		case *webcam.Timeout:
@@ -506,25 +526,43 @@ func captureFrame(ctx context.Context, devPort string, exposureMicroseconds, wid
 		if err != nil {
 			return nil, fmt.Errorf("failed to get frame from camera: %w", err)
 		}
-
-		frameCount++
-		// Discard the first 10 frames to give the camera a chance to "warm up".
-		if (frameCount < settlingTime) || len(frame) == 0 {
-			if frameCount == settlingTime-1 {
-				logAllControls(cam, devPort, "after_settling")
-			}
+		if len(frame) == 0 {
 			continue
-		}
-
-		logAllControls(cam, devPort, "after_frame")
-
-		frame, err = addMotionDht(frame)
-		if err != nil {
-			return nil, fmt.Errorf("failed to add DHT to the frame %w", err)
 		}
 		return frame, nil
 	}
-	return nil, fmt.Errorf("failed to capture a frame before context expired")
+	return nil, fmt.Errorf("failed to capture a frame")
+}
+
+func readFrame(ctx context.Context, cam *webcam.Webcam) ([]byte, error) {
+	for i := 0; i < 3 && ctx.Err() == nil; i++ {
+		frame, err := readRawFrame(ctx, cam)
+		if err != nil {
+			return nil, err
+		}
+		frame, err = addMotionDht(frame)
+		if err != nil {
+			slog.Error("failed to add DHT to frame", "error", err)
+			continue
+		}
+		return frame, nil
+	}
+	return nil, fmt.Errorf("failed to capture a frame")
+}
+
+func captureFrame(ctx context.Context, devPort string, exposureMicroseconds, width, height, whiteBalanceTemperature int32) ([]byte, error) {
+	cam, err := openCamera(ctx, devPort, exposureMicroseconds, width, height, whiteBalanceTemperature)
+	if err != nil {
+		return nil, err
+	}
+	defer cam.Close()
+
+	frame, err := readFrame(ctx, cam)
+	if err != nil {
+		return nil, err
+	}
+	logAllControls(cam, devPort, "after_frame")
+	return frame, nil
 }
 
 func setManualExposure(cam *webcam.Webcam, exposureMicroseconds int32) error {
