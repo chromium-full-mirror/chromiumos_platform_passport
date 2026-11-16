@@ -124,6 +124,13 @@ except ModuleNotFoundError:
     class _VideoFrameDSC:
         pass
 
+    class _HdmiModeRx(enum.IntEnum):
+        Unknown = -1
+        HDMI_1_4 = 0
+        HDMI_2_0 = 1
+        HDMI_2_1 = 2
+
+    unitap_stub.HdmiModeRx = _HdmiModeRx
     unitap_stub.VideoFrameDSC = _VideoFrameDSC
     unitap_stub.VideoCaptureStatus = _VideoCaptureStatus
     unitap_stub.EventCaptureStatus = _EventCaptureStatus
@@ -1652,6 +1659,272 @@ class TestUcd500Server(unittest.TestCase):
         )
         self.assertTrue(reply.success)
         self.assertIs(hdmi_server._port_rx, hdmi_role.hdrx)
+
+    def test_ucd422_stops_live_capture_started_by_stream_status(self) -> None:
+        """HDMI stream status reads leave live capture on; Ucd422 stops it."""
+        hdmi_server = ucd422.Ucd422Server()
+        hdmi_server._port_rx = mock.MagicMock()
+        port_io = mock.MagicMock()
+        stream = hdmi_server._port_rx.link.status.stream.return_value
+
+        with mock.patch.object(
+            hdmi_server, "_get_rx_port_io", return_value=port_io
+        ):
+            self.assertIs(hdmi_server._read_stream_status(0), stream)
+        port_io.set.assert_called_once_with(
+            hdmi_server._TSI_W_CAP_COMMAND, hdmi_server._TSI_CAP_CMD_STOP
+        )
+
+    @staticmethod
+    def _build_edid_with_cta_payload(cta_data_blocks: bytes) -> bytes:
+        base = bytearray(128)
+        base[126] = 1
+        cta = bytearray(128)
+        cta[0] = 0x02
+        cta[1] = 0x03
+        cta[2] = 4 + len(cta_data_blocks)
+        cta[4 : 4 + len(cta_data_blocks)] = cta_data_blocks
+        return bytes(base) + bytes(cta)
+
+    @mock.patch("ucd.ucd422.time.sleep")
+    def test_ucd422_load_edid_sets_matching_hdmi_mode(self, mock_sleep) -> None:
+        """Verifies deferred HdmiModeRx update from CTA HF-VSDB before HPD."""
+        hdmi_server = ucd422.Ucd422Server()
+        hdmi_role = mock.MagicMock(spec=UniTAP.dev.UCD422.HDMISourceHDMISink)
+        hdmi_role.hdrx = mock.MagicMock()
+        hdmi_role.hdrx.video_capturer.status = UniTAP.VideoCaptureStatus.Idle
+        hdmi_role.hdrx.edid.load_edid.return_value = [1]
+        hdmi_role.hdrx.link.status.hdmi_mode = UniTAP.HdmiModeRx.HDMI_2_1
+        self.mock_dev.select_role.return_value = hdmi_role
+        hdmi_server.OpenVideoTester(
+            video_pb2.OpenVideoTesterRequest(id=FAKE_SERIAL), self.context
+        )
+        hdmi_server.SetRoleVideoTester(
+            video_pb2.SetRoleRequest(
+                id=FAKE_SERIAL,
+                role=video_pb2.ROLE_HDMISOURCE_HDMISINK,
+            ),
+            self.context,
+        )
+
+        # 1. HDMI 1.4 EDID: LoadEdid + Attach(False) defers hdmi_mode write.
+        edid_14 = self._build_edid_with_cta_payload(
+            b"\x67\x03\x0c\x00\x10\x00\xb8\x1e"
+        )
+        resp_14 = hdmi_server.LoadEdidVideoTester(
+            video_pb2.LoadEdidVideoTesterRequest(
+                id=FAKE_SERIAL, edid=edid_14, id_stream=0
+            ),
+            self.context,
+        )
+        self.assertTrue(resp_14.success)
+        hdmi_server.AttachVideoTester(
+            video_pb2.AttachVideoTesterRequest(id=FAKE_SERIAL, attach=False),
+            self.context,
+        )
+        self.assertEqual(
+            hdmi_role.hdrx.link.status.hdmi_mode, UniTAP.HdmiModeRx.HDMI_2_1
+        )
+        mock_sleep.assert_not_called()
+
+        # Attach(True) applies deferred HDMI_1_4 mode and sleeps 2.5s.
+        hdmi_server.AttachVideoTester(
+            video_pb2.AttachVideoTesterRequest(id=FAKE_SERIAL, attach=True),
+            self.context,
+        )
+        self.assertEqual(
+            hdmi_role.hdrx.link.status.hdmi_mode, UniTAP.HdmiModeRx.HDMI_1_4
+        )
+        mock_sleep.assert_called_once_with(2.5)
+        mock_sleep.reset_mock()
+
+        # Repeating same EDID + Attach(True) is a no-op without 2.5s sleep.
+        resp_14_repeat = hdmi_server.LoadEdidVideoTester(
+            video_pb2.LoadEdidVideoTesterRequest(
+                id=FAKE_SERIAL, edid=edid_14, id_stream=0
+            ),
+            self.context,
+        )
+        self.assertTrue(resp_14_repeat.success)
+        hdmi_server.AttachVideoTester(
+            video_pb2.AttachVideoTesterRequest(id=FAKE_SERIAL, attach=True),
+            self.context,
+        )
+        self.assertEqual(
+            hdmi_role.hdrx.link.status.hdmi_mode, UniTAP.HdmiModeRx.HDMI_1_4
+        )
+        mock_sleep.assert_not_called()
+
+        # 2. HDMI 2.0 EDID (HF-VSDB 0xC45DD8 with Max_FRL_Rate=0) on Attach.
+        edid_20 = self._build_edid_with_cta_payload(
+            b"\x67\x03\x0c\x00\x10\x00\xb8\x3c"
+            b"\x67\xd8\x5d\xc4\x01\x78\x80\x00"
+        )
+        resp_20 = hdmi_server.LoadEdidVideoTester(
+            video_pb2.LoadEdidVideoTesterRequest(
+                id=FAKE_SERIAL, edid=edid_20, id_stream=0
+            ),
+            self.context,
+        )
+        self.assertTrue(resp_20.success)
+        hdmi_server.AttachVideoTester(
+            video_pb2.AttachVideoTesterRequest(id=FAKE_SERIAL, attach=True),
+            self.context,
+        )
+        self.assertEqual(
+            hdmi_role.hdrx.link.status.hdmi_mode, UniTAP.HdmiModeRx.HDMI_2_0
+        )
+        mock_sleep.assert_called_once_with(2.5)
+        mock_sleep.reset_mock()
+
+        # 3. HDMI 2.1 EDID applied inside HpdPulse without extra 2.5s sleep.
+        edid_21 = self._build_edid_with_cta_payload(
+            b"\x67\x03\x0c\x00\x10\x00\xb8\x3c"
+            b"\x67\xd8\x5d\xc4\x01\x78\x80\x67"
+        )
+        resp_21 = hdmi_server.LoadEdidVideoTester(
+            video_pb2.LoadEdidVideoTesterRequest(
+                id=FAKE_SERIAL, edid=edid_21, id_stream=0
+            ),
+            self.context,
+        )
+        self.assertTrue(resp_21.success)
+        hdmi_server.HpdPulseVideoTester(
+            video_pb2.HpdPulseVideoTesterRequest(id=FAKE_SERIAL),
+            self.context,
+        )
+        self.assertEqual(
+            hdmi_role.hdrx.link.status.hdmi_mode, UniTAP.HdmiModeRx.HDMI_2_1
+        )
+        mock_sleep.assert_called_once_with(3)
+
+    def test_ucd422_infers_hdmi_2_1_from_hf_scdb(self) -> None:
+        """Verifies HF-SCDB (extended tag 0x79) is parsed like HF-VSDB."""
+        scdb_frl = self._build_edid_with_cta_payload(
+            b"\xe7\x79\x00\x00\x01\x78\x80\x67"
+        )
+        scdb_tmds = self._build_edid_with_cta_payload(
+            b"\xe7\x79\x00\x00\x01\x78\x80\x00"
+        )
+        self.assertEqual(
+            ucd422._infer_hdmi_mode_from_edid(scdb_frl),
+            UniTAP.HdmiModeRx.HDMI_2_1,
+        )
+        self.assertEqual(
+            ucd422._infer_hdmi_mode_from_edid(scdb_tmds),
+            UniTAP.HdmiModeRx.HDMI_2_0,
+        )
+
+    @mock.patch("ucd.ucd422.time.sleep")
+    @mock.patch("ucd.ucd422.time.monotonic")
+    def test_ucd422_relatches_stuck_rx_with_one_hpd_pulse(
+        self, mock_monotonic: mock.MagicMock, mock_sleep: mock.MagicMock
+    ) -> None:
+        """Verifies the b/586509400 workaround pulses HPD only once."""
+        hdmi_server = ucd422.Ucd422Server()
+        hdmi_server.OpenVideoTester(
+            video_pb2.OpenVideoTesterRequest(id=FAKE_SERIAL), self.context
+        )
+        status = mock.MagicMock()
+        status.hpd_status = True
+        status.channel_lock = [False, False, False, False]
+        hdmi_server._port_rx = mock.MagicMock()
+        hdmi_server._port_rx.link.status = status
+        port_io = mock.MagicMock()
+        port_io.get.return_value = (13, [0] * 13, 3)
+        attach = video_pb2.AttachVideoTesterRequest(id=FAKE_SERIAL, attach=True)
+
+        def read_status_at(now: float) -> None:
+            mock_monotonic.return_value = now
+            with mock.patch.object(
+                hdmi_server, "_get_rx_port_io", return_value=port_io
+            ):
+                with self.assertRaises(ValueError):
+                    hdmi_server._read_stream_status(0)
+
+        mock_monotonic.return_value = 100.0
+        hdmi_server.AttachVideoTester(attach, self.context)
+        status.set_assert_state.reset_mock()
+
+        # Lanes unlocked (no valid source signal): never pulse.
+        read_status_at(110.0)
+        status.set_assert_state.assert_not_called()
+
+        # Lanes locked but < 5s since assert: no pulse yet.
+        status.channel_lock = [True, True, True, False]
+        read_status_at(103.0)
+        status.set_assert_state.assert_not_called()
+
+        # Lanes locked and >= 5s since assert: pulse HPD exactly once.
+        read_status_at(106.0)
+        self.assertEqual(
+            status.set_assert_state.call_args_list,
+            [mock.call(False), mock.call(True)],
+        )
+        mock_sleep.assert_called_with(hdmi_server._RX_RELATCH_HPD_LOW_SEC)
+        status.set_assert_state.reset_mock()
+        read_status_at(120.0)
+        status.set_assert_state.assert_not_called()
+
+        # A failing de-assert still re-asserts HPD and raises only ValueError.
+        hdmi_server.AttachVideoTester(attach, self.context)
+        status.set_assert_state.reset_mock()
+        status.set_assert_state.side_effect = [RuntimeError("usb"), None]
+        read_status_at(130.0)
+        self.assertEqual(
+            status.set_assert_state.call_args_list,
+            [mock.call(False), mock.call(True)],
+        )
+
+    @mock.patch("ucd.ucd422.time.sleep")
+    def test_ucd422_unlatched_video_mode_fast_fails_without_live_capture(
+        self, mock_sleep: mock.MagicMock
+    ) -> None:
+        """Verifies 0x0 timing skips StatusRx.stream() and retries once."""
+        hdmi_server = ucd422.Ucd422Server()
+        hdmi_server.OpenVideoTester(
+            video_pb2.OpenVideoTesterRequest(id=FAKE_SERIAL), self.context
+        )
+        hdmi_server._port_rx = mock.MagicMock()
+        hdmi_server._port_rx.link.status.hpd_status = True
+        port_io = mock.MagicMock()
+        stream = hdmi_server._port_rx.link.status.stream.return_value
+
+        # Case 1: Persistent 0x0 timing raises ValueError without live capture.
+        port_io.get.return_value = (13, [0] * 13, 3)
+        with mock.patch.object(
+            hdmi_server, "_get_rx_port_io", return_value=port_io
+        ):
+            with self.assertRaisesRegex(ValueError, "Video is not available"):
+                hdmi_server._read_stream_status(0)
+            info_resp = hdmi_server.GetStreamInfoVideoTester(
+                video_pb2.GetStreamInfoVideoTesterRequest(id=FAKE_SERIAL),
+                self.context,
+            )
+
+        hdmi_server._port_rx.link.status.stream.assert_not_called()
+        port_io.set.assert_not_called()
+        mock_sleep.assert_called_with(hdmi_server._HDMI_TIMING_RELATCH_WAIT_SEC)
+        self.assertEqual(len(info_resp.streams), 1)
+        self.assertEqual(info_resp.streams[0].hactive, 0)
+
+        # Case 2: Latches on second poll after 0.25s wait -> reads & stops cap.
+        mock_sleep.reset_mock()
+        port_io.get.side_effect = [
+            (13, [0] * 13, 3),
+            (13, [2200, 1125, 1920, 1080] + [0] * 9, 3),
+        ]
+        with mock.patch.object(
+            hdmi_server, "_get_rx_port_io", return_value=port_io
+        ):
+            self.assertIs(hdmi_server._read_stream_status(0), stream)
+        mock_sleep.assert_called_once_with(
+            hdmi_server._HDMI_TIMING_RELATCH_WAIT_SEC
+        )
+        hdmi_server._port_rx.link.status.stream.assert_called_once_with(0)
+        port_io.set.assert_called_once_with(
+            hdmi_server._TSI_W_CAP_COMMAND, hdmi_server._TSI_CAP_CMD_STOP
+        )
 
     def test_run_compliance_test_unknown_group_raises_clean_error(
         self,

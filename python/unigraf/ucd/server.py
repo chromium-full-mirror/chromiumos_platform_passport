@@ -1004,6 +1004,7 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
 
                 self._role = self._dev.select_role(role_to_set)
                 fw_info = self._get_fw_info()
+                logging.info("UCD firmware info: %s", fw_info)
                 if self._is_capture_memory_degraded(fw_info):
                     # Every screenshot would fail with "Minimum buffer size
                     # must be more than 0"; escalate through the recovery tiers.
@@ -1368,6 +1369,10 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
             return nested_val
         return nested_val if nested_val is not None else direct_val
 
+    def _read_stream_status(self, stream_id: int):
+        """Reads the SDK link status of stream_id (device-specific hook)."""
+        return self._port_rx.link.status.stream(stream_id)
+
     def _check_dut_driving_valid_stream(
         self, stream_id: int
     ) -> tuple[bool, str]:
@@ -1380,7 +1385,7 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
         except RuntimeError:
             pass
         try:
-            stream = self._port_rx.link.status.stream(stream_id)
+            stream = self._read_stream_status(stream_id)
         except ValueError as e:
             if "not available" in str(e).lower():
                 return False, str(e)
@@ -1605,7 +1610,7 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
         res = []
         for i in range(0, stream_num):
             try:
-                stream = self._port_rx.link.status.stream(i)
+                stream = self._read_stream_status(i)
             except ValueError as e:
                 if "not available" in str(e).lower():
                     logging.debug(
