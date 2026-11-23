@@ -2978,6 +2978,168 @@ class TestUcd500Server(unittest.TestCase):
         self.server.SetLinkVideoTester(req, self.context)
         self.mock_port_rx.hdcp.config.set.assert_not_called()
 
+    def test_run_compliance_test_dp21_intel_and_dp14_params(
+        self,
+    ) -> None:
+        """Verifies DP 2.1 Intel and DP 1.4 compliance parameter overrides."""
+        self._open_and_set_role()
+        self.mock_role.dut_tests = mock.MagicMock()
+
+        def make_dp_params(param_class: Any) -> types.SimpleNamespace:
+            flags = types.SimpleNamespace(
+                dsc_supported=False,
+                dsc_block_prediction_supported=True,
+                dut_is_type_c_device=False,
+            )
+            if param_class is UniTAP.Dp14SourceDUTTestParam:
+                flags.lane_count_reduction_without_lt_supported = True
+            return types.SimpleNamespace(
+                general=types.SimpleNamespace(
+                    dut_link_rates=types.SimpleNamespace(
+                        support_10Gbps=True,
+                        support_13_5Gbps=True,
+                        support_20Gbps=True,
+                    ),
+                    test_automation=types.SimpleNamespace(
+                        test_edid_read=True,
+                    ),
+                    dut_caps=types.SimpleNamespace(dut_caps_flags=flags),
+                ),
+                adaptive_sync=types.SimpleNamespace(
+                    as_caps=types.SimpleNamespace(support_adaptive_sync=True)
+                ),
+            )
+
+        self.mock_role.dut_tests.get_default_parameters.side_effect = (
+            make_dp_params
+        )
+
+        def fake_make_report(tmp_base: str, tested_by: str) -> None:
+            del tested_by
+            with open(f"{tmp_base}.html", "wb") as f:
+                f.write(b"<html>cts</html>")
+
+        self.mock_role.dut_tests.make_report.side_effect = fake_make_report
+        all_results = self.mock_role.dut_tests.get_all_tests_results
+        all_results.return_value.all_test_results.return_value = []
+
+        def run_case(
+            group_id: int, platform: str, model: str
+        ) -> types.SimpleNamespace:
+            self.mock_role.dut_tests.run.reset_mock()
+            req = video_pb2.RunComplianceTestRequest(
+                id=FAKE_SERIAL,
+                platform=platform,
+                model=model,
+                tests=[
+                    video_pb2.ComplianceTestVideoTester(
+                        group_id=group_id, test_id=0
+                    )
+                ],
+            )
+            self.server.RunComplianceTest(req, self.context)
+            return self.mock_role.dut_tests.run.call_args.args[2]
+
+        dp21_groups = (
+            video_pb2.GROUP_DISPLAYPORT_2_1_LINK_LAYER_SOURCE_DUT_CTS,
+            video_pb2.GROUP_DISPLAYPORT_2_1_DSC_CTS_SOURCE_DUT,
+            video_pb2.GROUP_DISPLAYPORT_2_1_DISPLAYID_CTS_SOURCE_TEST,
+        )
+        for group_id in dp21_groups:
+            ruby_params = run_case(group_id, "fatcat", "ruby")
+            ruby_rates = ruby_params.general.dut_link_rates
+            ruby_flags = ruby_params.general.dut_caps.dut_caps_flags
+            self.assertTrue(ruby_rates.support_10Gbps, group_id)
+            self.assertFalse(ruby_rates.support_13_5Gbps, group_id)
+            self.assertTrue(ruby_rates.support_20Gbps, group_id)
+            self.assertTrue(ruby_flags.dsc_supported, group_id)
+            self.assertFalse(
+                hasattr(
+                    ruby_flags,
+                    "lane_count_reduction_without_lt_supported",
+                ),
+                group_id,
+            )
+            self.assertFalse(
+                ruby_params.general.test_automation.test_edid_read,
+                group_id,
+            )
+            self.assertFalse(
+                ruby_params.adaptive_sync.as_caps.support_adaptive_sync,
+                group_id,
+            )
+
+            for board, model in (
+                ("fatcat", "ocelot"),
+                ("ocelot", "ocelot"),
+                ("brya", "redrix"),
+                ("nissa", "craaskbowl"),
+            ):
+                ctx = (group_id, board, model)
+                params = run_case(group_id, board, model)
+                rates = params.general.dut_link_rates
+                flags = params.general.dut_caps.dut_caps_flags
+                self.assertFalse(rates.support_10Gbps, ctx)
+                self.assertFalse(rates.support_13_5Gbps, ctx)
+                self.assertFalse(rates.support_20Gbps, ctx)
+                self.assertTrue(flags.dsc_supported, ctx)
+                self.assertFalse(
+                    hasattr(
+                        flags,
+                        "lane_count_reduction_without_lt_supported",
+                    ),
+                    ctx,
+                )
+                self.assertFalse(
+                    params.general.test_automation.test_edid_read, ctx
+                )
+                self.assertFalse(
+                    params.adaptive_sync.as_caps.support_adaptive_sync, ctx
+                )
+
+        dp14_groups = (
+            video_pb2.GROUP_DISPLAYPORT_1_4_LINK_LAYER_CTS,
+            video_pb2.GROUP_DISPLAYPORT_1_4_DSC_LINK_LAYER_CTS,
+            video_pb2.GROUP_DISPLAYPORT_1_4_DISPLAYID_CTS_SOURCE_TEST,
+        )
+        for group_id in dp14_groups:
+            for board, model in (
+                ("brya", "redrix"),
+                ("fatcat", "ruby"),
+                ("nissa", "craaskbowl"),
+                ("ocelot", "ocelot"),
+            ):
+                ctx = (group_id, board, model)
+                intel_dp14 = run_case(group_id, board, model)
+                intel_flags = intel_dp14.general.dut_caps.dut_caps_flags
+                self.assertFalse(
+                    intel_flags.lane_count_reduction_without_lt_supported, ctx
+                )
+                self.assertTrue(intel_flags.dsc_supported, ctx)
+                self.assertFalse(
+                    intel_dp14.general.test_automation.test_edid_read, ctx
+                )
+                self.assertFalse(
+                    intel_dp14.adaptive_sync.as_caps.support_adaptive_sync, ctx
+                )
+
+        dp14_ll = video_pb2.GROUP_DISPLAYPORT_1_4_LINK_LAYER_CTS
+        bluey_params = run_case(dp14_ll, "bluey", "quartz")
+        bluey_flags = bluey_params.general.dut_caps.dut_caps_flags
+        self.assertTrue(bluey_flags.dsc_supported)
+        self.assertFalse(bluey_flags.dsc_block_prediction_supported)
+        self.assertFalse(bluey_params.general.test_automation.test_edid_read)
+        self.assertFalse(
+            bluey_params.adaptive_sync.as_caps.support_adaptive_sync
+        )
+
+        mtk_params = run_case(dp14_ll, "tanjiro", "sapphire")
+        self.assertTrue(
+            mtk_params.general.dut_caps.dut_caps_flags.dut_is_type_c_device
+        )
+        self.assertFalse(mtk_params.general.test_automation.test_edid_read)
+        self.assertFalse(mtk_params.adaptive_sync.as_caps.support_adaptive_sync)
+
 
 if __name__ == "__main__":
     unittest.main()

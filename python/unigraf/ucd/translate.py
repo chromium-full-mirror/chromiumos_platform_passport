@@ -41,7 +41,6 @@ INTEL_COMMON_PARAMS_CTS_DUT_SRC = {
         "general.dut_caps.dut_caps_flags.fixed_timing_dut_supported": False,
         "general.dut_caps.dut_caps_flags.spread_spectrum_supported": False,
         "general.dut_caps.dut_caps_flags.change_vf_without_lt_supported": True,
-        "general.dut_caps.dut_caps_flags.lane_count_reduction_without_lt_supported": False,
         "general.dut_caps.dut_caps_flags.e_ddc_protocol_supported": True,
         "general.dut_caps.dut_caps_flags.dut_is_type_c_device": True,
         "general.dut_caps.dut_caps_flags.fec_supported": True,
@@ -65,8 +64,30 @@ INTEL_COMMON_PARAMS_CTS_DUT_SRC = {
 INTEL_COMMON_PARAMS_DP_1_4_CTS_DUT_SRC = {
     "default": {
         **INTEL_COMMON_PARAMS_CTS_DUT_SRC["default"],
+        "general.dut_caps.dut_caps_flags.lane_count_reduction_without_lt_supported": False,
         "general.test_automation.event_indication": dp_1_4_source_general_tab.EventIndication.AlwaysReady,
     }
+}
+
+# Intel's integrated C20 PHY supports UHBR10 and UHBR20, not UHBR13.5.
+_INTEL_UHBR_LINK_RATES = {
+    "general.dut_link_rates.support_10Gbps": True,
+    "general.dut_link_rates.support_13_5Gbps": False,
+    "general.dut_link_rates.support_20Gbps": True,
+}
+
+INTEL_COMMON_PARAMS_DP_2_1_CTS_DUT_SRC = {
+    "default": {
+        **INTEL_COMMON_PARAMS_CTS_DUT_SRC["default"],
+        # Keep UniTAP's EventIndication.ActiveVideo default on DP 2.1 (matching
+        # BLUEY and MTK DP 2.1 configs) so UCD waits for active video on HPD.
+        # 8b/10b only by default; UHBR-capable models opt in below.
+        "general.dut_link_rates.support_10Gbps": False,
+        "general.dut_link_rates.support_13_5Gbps": False,
+        "general.dut_link_rates.support_20Gbps": False,
+    },
+    # UHBR is opt-in per model (not platform-wide); add UHBR models below.
+    "ruby": _INTEL_UHBR_LINK_RATES,
 }
 
 BLUEY_COMMON_PARAMS_CTS_DUT_SRC = {
@@ -121,6 +142,16 @@ MTK_COMMON_PARAMS_DP_1_4_CTS_DUT_SRC = {
     }
 }
 
+_INTEL_PLATFORMS = ("brya", "fatcat", "nissa", "ocelot")
+_INTEL_DP_1_4_PLATFORMS = dict.fromkeys(
+    _INTEL_PLATFORMS,
+    INTEL_COMMON_PARAMS_DP_1_4_CTS_DUT_SRC,
+)
+_INTEL_DP_2_1_PLATFORMS = dict.fromkeys(
+    _INTEL_PLATFORMS,
+    INTEL_COMMON_PARAMS_DP_2_1_CTS_DUT_SRC,
+)
+
 # For each test groups we have:
 # - default param class
 # - for each board that needs to support special params
@@ -158,8 +189,7 @@ TEST_GROUPS = {
     video_pb2.GROUP_DISPLAYPORT_1_4_LINK_LAYER_CTS: {
         "group_id": UniTAP.TestGroupId.DP_RX_LL_CTS,
         "default_param_class": UniTAP.Dp14SourceDUTTestParam,
-        "brya": INTEL_COMMON_PARAMS_DP_1_4_CTS_DUT_SRC,
-        "fatcat": INTEL_COMMON_PARAMS_DP_1_4_CTS_DUT_SRC,
+        **_INTEL_DP_1_4_PLATFORMS,
         "bluey": BLUEY_COMMON_PARAMS_DP_1_4_CTS_DUT_SRC,
         "tanjiro": MTK_COMMON_PARAMS_DP_1_4_CTS_DUT_SRC,
         "sapphire": MTK_COMMON_PARAMS_DP_1_4_CTS_DUT_SRC,
@@ -167,8 +197,7 @@ TEST_GROUPS = {
     video_pb2.GROUP_DISPLAYPORT_1_4_DSC_LINK_LAYER_CTS: {
         "group_id": UniTAP.TestGroupId.DP_RX_LL_CTS_DSC,
         "default_param_class": UniTAP.Dp14SourceDUTTestParam,
-        "brya": INTEL_COMMON_PARAMS_DP_1_4_CTS_DUT_SRC,
-        "fatcat": INTEL_COMMON_PARAMS_DP_1_4_CTS_DUT_SRC,
+        **_INTEL_DP_1_4_PLATFORMS,
         "bluey": BLUEY_COMMON_PARAMS_DP_1_4_CTS_DUT_SRC,
         "tanjiro": MTK_COMMON_PARAMS_DP_1_4_CTS_DUT_SRC,
         "sapphire": MTK_COMMON_PARAMS_DP_1_4_CTS_DUT_SRC,
@@ -176,8 +205,7 @@ TEST_GROUPS = {
     video_pb2.GROUP_DISPLAYPORT_1_4_DISPLAYID_CTS_SOURCE_TEST: {
         "group_id": UniTAP.TestGroupId.DP_RX_DISPLAYID,
         "default_param_class": UniTAP.Dp14SourceDUTTestParam,
-        "brya": INTEL_COMMON_PARAMS_DP_1_4_CTS_DUT_SRC,
-        "fatcat": INTEL_COMMON_PARAMS_DP_1_4_CTS_DUT_SRC,
+        **_INTEL_DP_1_4_PLATFORMS,
         "bluey": BLUEY_COMMON_PARAMS_DP_1_4_CTS_DUT_SRC,
         "tanjiro": MTK_COMMON_PARAMS_DP_1_4_CTS_DUT_SRC,
         "sapphire": MTK_COMMON_PARAMS_DP_1_4_CTS_DUT_SRC,
@@ -185,8 +213,7 @@ TEST_GROUPS = {
     video_pb2.GROUP_DISPLAYPORT_2_1_LINK_LAYER_SOURCE_DUT_CTS: {
         "group_id": UniTAP.TestGroupId.DP_2_1_RX_LL_CTS,
         "default_param_class": UniTAP.Dp21SourceDUTTestParam,
-        "brya": INTEL_COMMON_PARAMS_CTS_DUT_SRC,
-        "fatcat": INTEL_COMMON_PARAMS_CTS_DUT_SRC,
+        **_INTEL_DP_2_1_PLATFORMS,
         "bluey": BLUEY_COMMON_PARAMS_CTS_DUT_SRC,
         "tanjiro": MTK_COMMON_PARAMS_CTS_DUT_SRC,
         "sapphire": MTK_COMMON_PARAMS_CTS_DUT_SRC,
@@ -194,8 +221,7 @@ TEST_GROUPS = {
     video_pb2.GROUP_DISPLAYPORT_2_1_DSC_CTS_SOURCE_DUT: {
         "group_id": UniTAP.TestGroupId.DP_2_1_RX_DSC_CTS,
         "default_param_class": UniTAP.Dp21SourceDUTTestParam,
-        "brya": INTEL_COMMON_PARAMS_CTS_DUT_SRC,
-        "fatcat": INTEL_COMMON_PARAMS_CTS_DUT_SRC,
+        **_INTEL_DP_2_1_PLATFORMS,
         "bluey": BLUEY_COMMON_PARAMS_CTS_DUT_SRC,
         "tanjiro": MTK_COMMON_PARAMS_CTS_DUT_SRC,
         "sapphire": MTK_COMMON_PARAMS_CTS_DUT_SRC,
@@ -203,8 +229,7 @@ TEST_GROUPS = {
     video_pb2.GROUP_DISPLAYPORT_2_1_DISPLAYID_CTS_SOURCE_TEST: {
         "group_id": UniTAP.TestGroupId.DP_2_1_RX_DISPAYID,
         "default_param_class": UniTAP.Dp21SourceDUTTestParam,
-        "brya": INTEL_COMMON_PARAMS_CTS_DUT_SRC,
-        "fatcat": INTEL_COMMON_PARAMS_CTS_DUT_SRC,
+        **_INTEL_DP_2_1_PLATFORMS,
         "bluey": BLUEY_COMMON_PARAMS_CTS_DUT_SRC,
         "tanjiro": MTK_COMMON_PARAMS_CTS_DUT_SRC,
         "sapphire": MTK_COMMON_PARAMS_CTS_DUT_SRC,
