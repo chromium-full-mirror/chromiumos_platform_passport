@@ -1571,10 +1571,39 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
                 )
             # Hold the frame itself: the next capture clears result.buffer.
             frame = result.buffer[0]
+            self._log_hdcp_rx_status(frame)
             self._check_frame_is_new(frame)
             return frame, None
         except Exception as e:  # pylint: disable=broad-except
             return None, e
+
+    def _log_hdcp_rx_status(self, frame) -> None:
+        """Logs the RX HDCP2x state read right after capturing frame.
+
+        The UCD masks captures to solid blue only while it sees HDCP active,
+        so this tells an unmasked capture of protected content apart from a
+        link the DUT never encrypted (b/588612769). Logged unconditionally:
+        a corrupted register read shows up as all-False here.
+        """
+        timestamp_ns = getattr(getattr(frame, "timestamp", None), "value", None)
+        try:
+            # Returns None (with a warning) on testers without HDCP 2.x.
+            status = self._port_rx.hdcp.status.get(UniTAP.HdcpStatus.StatusRx2x)
+            logging.info(
+                "Captured frame ts=%s ns; RX HDCP2x active=%s authenticated=%s"
+                " capable=%s keys=%s",
+                timestamp_ns,
+                bool(status.active),
+                bool(status.authenticated),
+                bool(status.capable),
+                status.keys.name,
+            )
+        except Exception as e:  # pylint: disable=broad-except
+            logging.info(
+                "Captured frame ts=%s ns; RX HDCP status unavailable: %s",
+                timestamp_ns,
+                e,
+            )
 
     def _check_frame_is_new(self, frame) -> None:
         """Raises if the capturer handed back the previously popped frame.
