@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import enum
+import itertools
 import os
 import sys
 import threading
@@ -80,9 +81,8 @@ except ModuleNotFoundError:
         Malfunction = 2
 
     class _EventCaptureStatus(enum.Enum):
-        Idle = 0
+        Stop = 0
         Running = 1
-        Malfunction = 2
 
     class _NotExistingRoleSelected(Exception):
         pass
@@ -91,7 +91,9 @@ except ModuleNotFoundError:
         pass
 
     class _USBCSourceUSBCSink:
-        pass
+        # Mirrors the real UniTAP role, which exposes both PD controllers.
+        pdcrx = None
+        pdctx = None
 
     class _DPSourceUSBCSink:
         pass
@@ -205,8 +207,8 @@ class TestUcd500Server(unittest.TestCase):
         self.mock_port_tx = mock.MagicMock()
         self.mock_port_rx.video_capturer.status = UniTAP.VideoCaptureStatus.Idle
         self.mock_port_rx.video_capturer.max_stream_number = 4
-        self.mock_port_rx.event_capturer.status = UniTAP.EventCaptureStatus.Idle
-        self.mock_port_tx.event_capturer.status = UniTAP.EventCaptureStatus.Idle
+        self.mock_port_rx.event_capturer.status = UniTAP.EventCaptureStatus.Stop
+        self.mock_port_tx.event_capturer.status = UniTAP.EventCaptureStatus.Stop
         self.mock_role.dprx = self.mock_port_rx
         self.mock_role.dptx = self.mock_port_tx
         self.mock_role.pdcrx = mock.MagicMock()
@@ -668,7 +670,7 @@ class TestUcd500Server(unittest.TestCase):
 
         def stop_event_capturer() -> None:
             self.mock_port_rx.event_capturer.status = (
-                UniTAP.EventCaptureStatus.Idle
+                UniTAP.EventCaptureStatus.Stop
             )
             self.mock_port_rx.event_capturer._EventCapturer__result.buffer = []
 
@@ -682,7 +684,7 @@ class TestUcd500Server(unittest.TestCase):
                 reg == 0x301
                 and val == 2
                 and self.mock_port_rx.event_capturer.status
-                == UniTAP.EventCaptureStatus.Idle
+                == UniTAP.EventCaptureStatus.Stop
             ):
                 self.mock_port_rx.video_capturer.status = (
                     UniTAP.VideoCaptureStatus.Idle
@@ -933,8 +935,8 @@ class TestUcd500Server(unittest.TestCase):
         self.server.OpenVideoTester(
             video_pb2.OpenVideoTesterRequest(id=FAKE_SERIAL), self.context
         )
-        self.mock_io.get_prepared_fw_info.side_effect = (
-            [HEALTHY_FW_INFO] + [WEDGED_PD_FW_INFO] * 8
+        self.mock_io.get_prepared_fw_info.side_effect = itertools.chain(
+            [HEALTHY_FW_INFO], itertools.repeat(WEDGED_PD_FW_INFO)
         )
 
         with (
@@ -955,6 +957,7 @@ class TestUcd500Server(unittest.TestCase):
             str(ctx.exception),
         )
         self.mock_role.pdcrx.controls.reset.assert_called_once()
+        self.mock_role.pdctx.controls.reset.assert_called_once()
 
     def test_set_role_recovers_pdrx_zero_via_reopen_when_pdc_reset_insufficient(
         self,
@@ -963,9 +966,10 @@ class TestUcd500Server(unittest.TestCase):
         self.server.OpenVideoTester(
             video_pb2.OpenVideoTesterRequest(id=FAKE_SERIAL), self.context
         )
-        self.mock_io.get_prepared_fw_info.side_effect = (
-            [WEDGED_PD_FW_INFO] * 7 + [HEALTHY_FW_INFO, HEALTHY_FW_INFO]
-        )
+        # 1 role-select read + 6 RX polls + 6 TX polls stay wedged.
+        self.mock_io.get_prepared_fw_info.side_effect = [
+            WEDGED_PD_FW_INFO
+        ] * 13 + [HEALTHY_FW_INFO, HEALTHY_FW_INFO]
 
         with (
             mock.patch("ucd.ucd500.UniTAP.OpfHandlerInternal"),
@@ -981,6 +985,7 @@ class TestUcd500Server(unittest.TestCase):
 
         self.assertTrue(reply.success)
         self.mock_role.pdcrx.controls.reset.assert_called_once()
+        self.mock_role.pdctx.controls.reset.assert_called_once()
         self.assertEqual(self.mock_dev.select_role.call_count, 2)
         self.mock_tsilib.close.assert_called_once_with(self.mock_dev)
 
@@ -1028,9 +1033,9 @@ class TestUcd500Server(unittest.TestCase):
             "UCD-500|2236C961|UX: 0.0.0, UF: 1.0.22, PDRX: 0.2.3, PDTX: 0.2.3|"
             "1.0|2048"
         )
-        self.mock_io.get_prepared_fw_info.side_effect = (
-            [ux_and_pdrx_zero_fw] + [benign_ux_zero_fw] * 5
-        )
+        self.mock_io.get_prepared_fw_info.side_effect = [
+            ux_and_pdrx_zero_fw
+        ] + [benign_ux_zero_fw] * 5
 
         with (
             mock.patch("ucd.ucd500.UniTAP.OpfHandlerInternal"),
@@ -1116,9 +1121,11 @@ class TestUcd500Server(unittest.TestCase):
             return self.mock_dev
 
         self.mock_tsilib.open.side_effect = reopen_with_roles
-        UniTAP.libs.lib_tsi.tsi.TSIX_DEV_RescanDevices.reset_mock()
 
         with (
+            mock.patch(
+                "ucd.server.UniTAP.libs.lib_tsi.tsi.TSIX_DEV_RescanDevices"
+            ) as mock_rescan,
             mock.patch("ucd.ucd500.UniTAP.OpfHandlerInternal"),
             mock.patch("ucd.server.time.sleep"),
         ):
@@ -1132,7 +1139,7 @@ class TestUcd500Server(unittest.TestCase):
 
         self.assertTrue(reply.success)
         self.mock_tsilib.close.assert_called_once_with(self.mock_dev)
-        UniTAP.libs.lib_tsi.tsi.TSIX_DEV_RescanDevices.assert_called_once()
+        mock_rescan.assert_called_once()
         self.assertEqual(self.mock_dev.select_role.call_count, 1)
 
     def test_select_role_tier3_hard_recovery_polls_until_roles_populated(
@@ -1196,9 +1203,11 @@ class TestUcd500Server(unittest.TestCase):
             booting_dev,
             ready_dev,
         ]
-        UniTAP.libs.lib_tsi.tsi.TSIX_DEV_RescanDevices.reset_mock()
 
         with (
+            mock.patch(
+                "ucd.server.UniTAP.libs.lib_tsi.tsi.TSIX_DEV_RescanDevices"
+            ) as mock_rescan,
             mock.patch("ucd.ucd500.UniTAP.OpfHandlerInternal"),
             mock.patch.object(
                 self.server, "_force_usb_reenumeration", return_value=True
@@ -1213,9 +1222,7 @@ class TestUcd500Server(unittest.TestCase):
         self.assertEqual(self.server._HW_RESET_INITIAL_WAIT_SEC, 30)
         mock_sleep.assert_any_call(30)
         mock_usb_bounce.assert_called_once_with(FAKE_SERIAL)
-        self.assertEqual(
-            UniTAP.libs.lib_tsi.tsi.TSIX_DEV_RescanDevices.call_count, 3
-        )
+        self.assertEqual(mock_rescan.call_count, 3)
         self.assertEqual(self.mock_dev.select_role.call_count, 2)
         self.assertEqual(self.mock_tsilib._TsiLib__device_list, [])
 
@@ -1688,6 +1695,13 @@ class TestUcd500Server(unittest.TestCase):
         )
         self.assertTrue(reply.success)
         self.assertIs(hdmi_server._port_rx, hdmi_role.hdrx)
+
+    def test_ucd422_live_capture_omits_stream_number(self) -> None:
+        """UniTAP 3.12 HDMI capturer start() takes no stream_number."""
+        hdmi_server = ucd422.Ucd422Server()
+        capturer = mock.MagicMock()
+        hdmi_server._start_live_capture(capturer, stream_number=0)
+        capturer.start.assert_called_once_with(frames_count=0)
 
     def test_ucd422_stops_live_capture_started_by_stream_status(self) -> None:
         """HDMI stream status reads leave live capture on; Ucd422 stops it."""

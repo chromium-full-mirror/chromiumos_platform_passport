@@ -342,6 +342,12 @@ class Ucd422Server(server.UcdServer):
                     "Failed to stop live capture after stream status: %s", e
                 )
 
+    def _start_live_capture(self, capturer, *, stream_number: int) -> None:
+        # UniTAP 3.12 dropped stream_number from the HDMI capturer's start();
+        # HDMI RX has a single stream.
+        del stream_number
+        capturer.start(frames_count=0)
+
     @log_functionality.logger
     def _get_number_of_video_streams(self):
         if self._port_rx.link.status.hpd_status:

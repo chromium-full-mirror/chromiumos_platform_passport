@@ -380,7 +380,8 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
             return
         fw_dict = getattr(port.event_capturer, "_EventCapturer__fw_info", None)
         if isinstance(fw_dict, dict):
-            fw_dict["ucd_fw_version"] = fw_version
+            # Same sanitizing UniTAP 3.12 applies before HTML substitution.
+            fw_dict["ucd_fw_version"] = fw_version.replace("\r\n", "")
 
     def _remove_from_tsilib_device_list(self, dev) -> None:
         """Ensures a closed TSIDevice is removed from TsiLib's device list."""
@@ -515,8 +516,8 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
         ):
             try:
                 try:
-                    self._port_rx.video_capturer.start(
-                        frames_count=0, stream_number=0
+                    self._start_live_capture(
+                        self._port_rx.video_capturer, stream_number=0
                     )
                 finally:
                     self._port_rx.video_capturer.stop()
@@ -594,7 +595,9 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
     def _is_capture_memory_degraded(self, fw_info: str) -> bool:
         """Returns True if fw_info reports less capture memory than expected."""
         match = re.search(r"(\d+)\s*KiB", fw_info or "")
-        return bool(match) and int(match.group(1)) < self._MIN_CAPTURE_MEMORY_KIB
+        return (
+            bool(match) and int(match.group(1)) < self._MIN_CAPTURE_MEMORY_KIB
+        )
 
     def _is_benign_ux_only_corruption(self, fw_info: str, role=None) -> bool:
         """Checks if only UX is 0.0.0 while UF and active PD are healthy."""
@@ -633,10 +636,8 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
                         for attempt in range(self._PDC_RESET_MAX_POLL_ATTEMPTS):
                             time.sleep(self._PDC_RESET_POLL_INTERVAL_SEC)
                             post_fw_info = self._get_fw_info()
-                            still_corrupted = (
-                                self._get_corrupted_fw_components(
-                                    post_fw_info, self._role
-                                )
+                            still_corrupted = self._get_corrupted_fw_components(
+                                post_fw_info, self._role
                             )
                             if (
                                 comp not in still_corrupted
@@ -1381,6 +1382,10 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
         """Reads the SDK link status of stream_id (device-specific hook)."""
         return self._port_rx.link.status.stream(stream_id)
 
+    def _start_live_capture(self, capturer, *, stream_number: int) -> None:
+        """Starts live video capture on stream_number (device-specific hook)."""
+        capturer.start(frames_count=0, stream_number=stream_number)
+
     def _check_dut_driving_valid_stream(
         self, stream_id: int
     ) -> tuple[bool, str]:
@@ -1560,7 +1565,9 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
 
             # Asynchronous live capture with hardware latch window.
             try:
-                capturer.start(frames_count=0, stream_number=request.id_stream)
+                self._start_live_capture(
+                    capturer, stream_number=request.id_stream
+                )
                 time.sleep(self._SCREENSHOT_LATCH_DELAY_SEC)
                 capturer.pop_element()
             finally:

@@ -195,7 +195,10 @@ pyinstaller-hooks-contrib==2025.1 \
     #   -r python/acroname_requirements.in
     #   pyinstaller
 
-# WARNING: The following packages were not pinned, but pip requires them to be
-# pinned when the requirements file includes hashes and the requirement is not
-# satisfied by a package already installed. Consider using the --allow-unsafe flag.
-# setuptools
+# The following packages are considered to be unsafe in a requirements file:
+setuptools==80.10.2 \
+    --hash=sha256:95b30ddfb717250edb492926c92b5221f7ef3fbcc2b07579bcd4a27da21d0173 \
+    --hash=sha256:8b0e9d10c784bf7d262c4e5ec5d4ec94127ce206e8738f29a437945fbc219b70
+    # via
+    #   -r python/acroname_requirements.in
+    #   pyinstaller

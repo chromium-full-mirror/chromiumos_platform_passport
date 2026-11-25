@@ -4,7 +4,7 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-FROM --platform=$BUILDPLATFORM debian:bookworm-slim AS usb_build
+FROM --platform=$BUILDPLATFORM debian:trixie-slim AS usb_build
 
 RUN apt update
 RUN apt install -y build-essential devscripts debhelper
@@ -26,7 +26,7 @@ ARG TARGETOS TARGETARCH
 RUN GOOS=$TARGETOS GOARCH=$TARGETARCH CGO_ENABLED=0 \
     go build -C ./source/platform/passport/go/src -o /bin/cros-passport
 
-FROM --platform=$BUILDPLATFORM debian:bookworm-slim AS acronamectl
+FROM --platform=$BUILDPLATFORM debian:trixie-slim AS acronamectl
 
 # Prepare python the environment.
 RUN apt-get update \
@@ -44,14 +44,14 @@ COPY --from=apiconfig python/ chromiumos_apis
 COPY --from=passport python/ .
 
 RUN venv/bin/pip install --require-hashes -r acroname_requirements.txt \
-    && venv/bin/pip install --no-deps --no-index chromiumos_apis/
+    && venv/bin/pip install --no-build-isolation --no-deps --no-index chromiumos_apis/
 
 RUN venv/bin/pyinstaller \
       --name acronamectl \
       --collect-all brainstem \
       --onefile acronamectl.py
 
-FROM --platform=$BUILDPLATFORM debian:bookworm-slim AS unigrafctl_build
+FROM --platform=$BUILDPLATFORM debian:trixie-slim AS unigrafctl_build
 
 # Prepare python the enviroment.
 RUN apt-get update \
@@ -69,13 +69,13 @@ COPY --from=apiconfig python/ chromiumos_apis
 COPY --from=passport python/ .
 
 ARG UTC274_SDK_VERSION=1.1.65.835
-ARG UCD500_SDK_VERSION=3.6.398.13810
+ARG UCD500_SDK_VERSION=3.12.28.14630
 
 # Install the unigraf control dependencies and the chromiumos APIs.
 RUN wget https://storage.googleapis.com/chromeos-localmirror/distfiles/UTCLibrary-${UTC274_SDK_VERSION}.tar.gz \
     && wget https://storage.googleapis.com/chromeos-localmirror/distfiles/UniTAP-${UCD500_SDK_VERSION}.tar.gz \
     && venv/bin/pip install --require-hashes -r unigraf_requirements.txt \
-    && venv/bin/pip install --no-deps --no-index chromiumos_apis/
+    && venv/bin/pip install --no-build-isolation --no-deps --no-index chromiumos_apis/
 
 RUN venv/bin/pyinstaller \
     --collect-all UniTAP \
@@ -126,7 +126,7 @@ RUN mkdir -p /third_party/python \
       --output-file=/third_party/python/list.csv
 
 # Final assembly.
-FROM --platform=$BUILDPLATFORM debian:bookworm-slim
+FROM --platform=$BUILDPLATFORM debian:trixie-slim
 
 RUN apt-get update \
   && apt-get install -y usbutils libpcap-dev ca-certificates ffmpeg \

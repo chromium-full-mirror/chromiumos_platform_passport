@@ -4,3 +4,5 @@ packaging==24.2
 protobuf==3.19.0
 pyinstaller==6.12.0
 pyinstaller-hooks-contrib==2025.1
+# pkg_resources (removed in 81) is needed by altgraph for pyinstaller.
+setuptools<81
