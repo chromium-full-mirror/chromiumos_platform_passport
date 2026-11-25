@@ -204,6 +204,7 @@ class TestUcd500Server(unittest.TestCase):
         self.mock_port_rx = mock.MagicMock()
         self.mock_port_tx = mock.MagicMock()
         self.mock_port_rx.video_capturer.status = UniTAP.VideoCaptureStatus.Idle
+        self.mock_port_rx.video_capturer.max_stream_number = 4
         self.mock_port_rx.event_capturer.status = UniTAP.EventCaptureStatus.Idle
         self.mock_port_tx.event_capturer.status = UniTAP.EventCaptureStatus.Idle
         self.mock_role.dprx = self.mock_port_rx
@@ -1527,6 +1528,34 @@ class TestUcd500Server(unittest.TestCase):
         self.assertEqual(len(edid_paths), 1)
         self.assertFalse(os.path.exists(edid_paths[0]))
 
+    def test_load_edid_rejects_out_of_range_stream(self) -> None:
+        """Verifies valid stream >= 1 loads and out-of-range is rejected."""
+        self._open_and_set_role()
+        edid = self.mock_port_rx.edid
+        edid.load_edid.return_value = [1]
+
+        resp = self.server.LoadEdidVideoTester(
+            video_pb2.LoadEdidVideoTesterRequest(
+                id=FAKE_SERIAL, edid=b"\x00\xff" * 64, id_stream=1
+            ),
+            self.context,
+        )
+        self.assertTrue(resp.success)
+        self.assertEqual(edid.load_edid.call_args.kwargs["stream"], 1)
+
+        with self.assertRaises(ValueError):
+            self.server.LoadEdidVideoTester(
+                video_pb2.LoadEdidVideoTesterRequest(
+                    id=FAKE_SERIAL, edid=b"\x00\xff" * 64, id_stream=4
+                ),
+                self.context,
+            )
+        edid.load_edid.assert_called_once()  # Rejected request never writes.
+        self.assertEqual(
+            self.context.abort.call_args.args[0],
+            grpc.StatusCode.INVALID_ARGUMENT,
+        )
+
     def test_synchronized_lock_serializes_concurrent_rpcs(self) -> None:
         """Verifies self._lock prevents overlapping RPC execution."""
         self._open_and_set_role()
@@ -1693,6 +1722,7 @@ class TestUcd500Server(unittest.TestCase):
         hdmi_role = mock.MagicMock(spec=UniTAP.dev.UCD422.HDMISourceHDMISink)
         hdmi_role.hdrx = mock.MagicMock()
         hdmi_role.hdrx.video_capturer.status = UniTAP.VideoCaptureStatus.Idle
+        hdmi_role.hdrx.video_capturer.max_stream_number = 1
         hdmi_role.hdrx.edid.load_edid.return_value = [1]
         hdmi_role.hdrx.link.status.hdmi_mode = UniTAP.HdmiModeRx.HDMI_2_1
         self.mock_dev.select_role.return_value = hdmi_role

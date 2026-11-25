@@ -1299,9 +1299,17 @@ class UcdServer(video_pb2_grpc.VideoTesterServiceServicer):
 
     @synchronized
     @log_functionality.logger
-    def LoadEdidVideoTester(self, request, _):
+    def LoadEdidVideoTester(self, request, context):
         """Loads the provided EDID data onto a given video tester."""
         self._check_serial_active(request.id)
+
+        max_streams = self._port_rx.video_capturer.max_stream_number
+        # UniTAP only warns on an out-of-range stream and then writes the
+        # currently selected stream, so reject it here (b/590494646).
+        if not 0 <= request.id_stream < max_streams:
+            msg = f"id_stream {request.id_stream} not in [0, {max_streams})"
+            context.abort(grpc.StatusCode.INVALID_ARGUMENT, msg)
+            raise ValueError(msg)  # Unreachable with a real gRPC context.
 
         with temp_file_path(suffix=".bin") as tmp_path:
             with open(tmp_path, "wb") as f:
